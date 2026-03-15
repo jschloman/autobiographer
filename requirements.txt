@@ -1,0 +1,17 @@
+requests
+pandas
+plotly
+streamlit
+nbformat
+ipykernel
+pytest
+pytest-cov
+responses
+pydeck
+geopandas
+shapely
+moviepy
+playwright
+imageio
+imageio-ffmpeg
+numpy
