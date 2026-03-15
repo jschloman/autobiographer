@@ -1,0 +1,94 @@
+{
+  "defaults": {
+    "city": "Reykjavik, IS",
+    "lat": 64.1265,
+    "lng": -21.8174,
+    "timezone": "Atlantic/Reykjavik"
+  },
+  "holidays": [
+    {
+      "name": "Midsummer",
+      "month": 6,
+      "day_range": [20, 26],
+      "city": "Anchorage, AK",
+      "lat": 61.2181,
+      "lng": -149.9003,
+      "timezone": "US/Alaska"
+    },
+    {
+      "name": "Winter Solstice",
+      "month": 12,
+      "day_range": [20, 27],
+      "city": "Anchorage, AK",
+      "lat": 61.2181,
+      "lng": -149.9003,
+      "timezone": "US/Alaska"
+    }
+  ],
+  "trips": [
+    {"start": "2022-05-09", "end": "2022-05-14", "city": "Perth, AU", "lat": -31.9505, "lng": 115.8605, "timezone": "Australia/Perth"},
+    {"start": "2022-03-24", "end": "2022-03-31", "city": "Cairo, EG", "lat": 30.0444, "lng": 31.2357, "timezone": "Africa/Cairo"},
+    {"start": "2022-05-25", "end": "2022-06-03", "city": "Anchorage, AK", "lat": 61.2181, "lng": -149.9003, "timezone": "US/Alaska"},
+    {"start": "2022-06-15", "end": "2022-06-18", "city": "Mumbai, IN", "lat": 19.0760, "lng": 72.8777, "timezone": "Asia/Kolkata"},
+    {"start": "2022-06-22", "end": "2022-07-08", "city": "Anchorage, AK", "lat": 61.2181, "lng": -149.9003, "timezone": "US/Alaska"},
+    {"start": "2022-07-19", "end": "2022-07-26", "city": "Rio de Janeiro, BR", "lat": -22.9068, "lng": -43.1729, "timezone": "America/Sao_Paulo"},
+    {"start": "2020-08-13", "end": "2020-08-14", "city": "Oslo, NO", "lat": 59.9139, "lng": 10.7522, "timezone": "Europe/Oslo"},
+    {"start": "2020-08-14", "end": "2020-08-18", "city": "Svalbard, NO", "lat": 78.2232, "lng": 15.6267, "timezone": "Arctic/Longyearbyen"},
+    {"start": "2020-08-19", "end": "2020-08-19", "city": "Helsinki, FI", "lat": 60.1699, "lng": 24.9384, "timezone": "Europe/Helsinki"},
+    {"start": "2020-08-20", "end": "2020-08-21", "city": "Tallinn, EE", "lat": 59.4370, "lng": 24.7535, "timezone": "Europe/Tallinn"},
+    {"start": "2020-08-22", "end": "2020-08-23", "city": "Riga, LV", "lat": 56.9496, "lng": 24.1052, "timezone": "Europe/Riga"},
+    {"start": "2020-08-24", "end": "2020-08-26", "city": "Vilnius, LT", "lat": 54.6872, "lng": 25.2797, "timezone": "Europe/Vilnius"},
+    {"start": "2021-07-17", "end": "2021-07-19", "city": "Dublin, IE", "lat": 53.3498, "lng": -6.2603, "timezone": "Europe/Dublin"},
+    {"start": "2021-07-31", "end": "2021-08-01", "city": "Perth, AU", "lat": -31.9505, "lng": 115.8605, "timezone": "Australia/Perth"},
+    {"start": "2021-08-10", "end": "2021-08-10", "city": "Auckland, NZ", "lat": -36.8485, "lng": 174.7633, "timezone": "Pacific/Auckland"},
+    {"start": "2021-09-21", "end": "2021-09-23", "city": "Auckland, NZ", "lat": -36.8485, "lng": 174.7633, "timezone": "Pacific/Auckland"},
+    {"start": "2021-10-12", "end": "2021-10-16", "city": "Lisbon, PT", "lat": 38.7223, "lng": -9.1393, "timezone": "Europe/Lisbon"},
+    {"start": "2021-11-13", "end": "2021-11-14", "city": "Mumbai, IN", "lat": 19.0760, "lng": 72.8777, "timezone": "Asia/Kolkata"},
+    {"start": "2022-03-22", "end": "2022-03-24", "city": "Auckland, NZ", "lat": -36.8485, "lng": 174.7633, "timezone": "Pacific/Auckland"},
+    {"start": "2022-05-05", "end": "2022-05-08", "city": "Perth, AU", "lat": -31.9505, "lng": 115.8605, "timezone": "Australia/Perth"},
+    {"start": "2022-06-18", "end": "2022-06-19", "city": "Mumbai, IN", "lat": 19.0760, "lng": 72.8777, "timezone": "Asia/Kolkata"},
+    {"start": "2022-08-10", "end": "2022-08-14", "city": "Santiago, CL", "lat": -33.4489, "lng": -70.6693, "timezone": "America/Santiago"},
+    {"start": "2023-05-17", "end": "2023-05-17", "city": "Stockholm, SE", "lat": 59.3293, "lng": 18.0686, "timezone": "Europe/Stockholm"},
+    {"start": "2020-03-21", "end": "2020-03-21", "city": "Casablanca, MA", "lat": 33.5731, "lng": -7.5898, "timezone": "Africa/Casablanca"},
+    {"start": "2020-03-22", "end": "2020-03-26", "city": "Perth, AU", "lat": -31.9505, "lng": 115.8605, "timezone": "Australia/Perth"},
+    {"start": "2020-03-27", "end": "2020-03-27", "city": "Seoul, KR", "lat": 37.5665, "lng": 126.9780, "timezone": "Asia/Seoul"},
+    {"start": "2020-05-30", "end": "2020-06-05", "city": "Bangkok, TH", "lat": 13.7563, "lng": 100.5018, "timezone": "Asia/Bangkok"},
+    {"start": "2020-06-11", "end": "2020-06-13", "city": "Mumbai, IN", "lat": 19.0760, "lng": 72.8777, "timezone": "Asia/Kolkata"},
+    {"start": "2020-09-12", "end": "2020-09-12", "city": "Warsaw, PL", "lat": 52.2297, "lng": 21.0122, "timezone": "Europe/Warsaw"},
+    {"start": "2020-11-07", "end": "2020-11-08", "city": "Athens, GR", "lat": 37.9838, "lng": 23.7275, "timezone": "Europe/Athens"},
+    {"start": "2020-11-09", "end": "2020-11-09", "city": "Thessaloniki, GR", "lat": 40.6401, "lng": 22.9444, "timezone": "Europe/Athens"},
+    {"start": "2020-11-10", "end": "2020-11-10", "city": "Athens, GR", "lat": 37.9838, "lng": 23.7275, "timezone": "Europe/Athens"},
+    {"start": "2020-11-11", "end": "2020-11-13", "city": "Heraklion, GR", "lat": 35.3387, "lng": 25.1442, "timezone": "Europe/Athens"},
+    {"start": "2020-11-14", "end": "2020-11-15", "city": "Rhodes, GR", "lat": 36.4341, "lng": 28.2176, "timezone": "Europe/Athens"},
+    {"start": "2023-01-08", "end": "2023-01-11", "city": "Luxembourg City, LU", "lat": 49.6116, "lng": 6.1319, "timezone": "Europe/Luxembourg"},
+    {"start": "2023-01-13", "end": "2023-01-15", "city": "Bern, CH", "lat": 46.9480, "lng": 7.4474, "timezone": "Europe/Zurich"},
+    {"start": "2023-01-16", "end": "2023-01-18", "city": "Cairo, EG", "lat": 30.0444, "lng": 31.2357, "timezone": "Africa/Cairo"}
+  ],
+  "residency": [
+    {
+      "start": "2015-08-01",
+      "end": "2025-03-31",
+      "city": "Remote Period",
+      "sub_rules": [
+        {
+          "condition": "work_hours",
+          "city": "Co-working Space",
+          "lat": -1.2921,
+          "lng": 36.8219,
+          "timezone": "Africa/Nairobi"
+        },
+        {
+          "condition": "home_logic",
+          "home_1_end": "2018-06-30",
+          "city_1": "Nairobi, KE",
+          "lat_1": -1.286389,
+          "lng_1": 36.817223,
+          "city_2": "Mombasa, KE",
+          "lat_2": -4.043477,
+          "lng_2": 39.668206,
+          "timezone": "Africa/Nairobi"
+        }
+      ]
+    }
+  ]
+}

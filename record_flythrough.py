@@ -1,0 +1,294 @@
+import pandas as pd
+import pydeck as pdk
+import os
+import json
+import argparse
+import sys
+import asyncio
+import numpy as np
+from datetime import datetime
+from playwright.async_api import async_playwright
+from moviepy import ImageSequenceClip
+import math
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Calculate the great circle distance between two points in kilometers."""
+    R = 6371
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+def filter_data(df, artist=None, start_date=None, end_date=None):
+    """Apply filters to the dataframe."""
+    filtered_df = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(filtered_df['date_text']):
+        filtered_df['date_text'] = pd.to_datetime(filtered_df['date_text'])
+    if artist and artist != "All":
+        filtered_df = filtered_df[filtered_df['artist'] == artist]
+    if start_date:
+        filtered_df = filtered_df[filtered_df['date_text'] >= pd.to_datetime(start_date)]
+    if end_date:
+        filtered_df = filtered_df[filtered_df['date_text'] <= pd.to_datetime(end_date)]
+    return filtered_df
+
+def interpolate_views(start, end, n_frames, easing="sine"):
+    """Interpolate between two view states, including timestamp."""
+    if n_frames <= 0: return []
+    t = np.linspace(0, 1, n_frames)
+    if easing == "sine":
+        t_eased = (1 - np.cos(t * np.pi)) / 2
+    elif easing == "cubic":
+        t_eased = np.where(t < 0.5, 4 * t**3, 1 - np.power(-2 * t + 2, 3) / 2)
+    else:
+        t_eased = t
+        
+    res = []
+    for i in range(n_frames):
+        view = {
+            "latitude": start["latitude"] + t_eased[i] * (end["latitude"] - start["latitude"]),
+            "longitude": start["longitude"] + t_eased[i] * (end["longitude"] - start["longitude"]),
+            "zoom": start["zoom"] + t_eased[i] * (end["zoom"] - start["zoom"]),
+            "pitch": start["pitch"] + t_eased[i] * (end["pitch"] - start["pitch"]),
+            "bearing": start["bearing"] + t_eased[i] * (end["bearing"] - start["bearing"]),
+        }
+        # Interpolate timestamp linearly
+        if "timestamp" in start and "timestamp" in end:
+            view["timestamp"] = start["timestamp"] + t[i] * (end["timestamp"] - start["timestamp"])
+        res.append(view)
+    return res
+
+async def capture_frames(html_path, frames_dir, view_states, viewport=(1920, 1080)):
+    """Capture PNG frames using Playwright."""
+    os.makedirs(frames_dir, exist_ok=True)
+    with open(html_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+    
+    # Hijack script + Overlay setup
+    hijack_script = """
+    <script>
+    (function() {
+        window.deckglInstance = undefined;
+        let _realCreateDeck = window.createDeck;
+        Object.defineProperty(window, 'createDeck', {
+            get: function() {
+                return function(props) {
+                    if (typeof _realCreateDeck !== 'function') return null;
+                    const instance = _realCreateDeck(props);
+                    window.deckglInstance = instance;
+                    return instance;
+                };
+            },
+            set: function(val) { _realCreateDeck = val; },
+            configurable: true
+        });
+        
+        // Add overlay div
+        window.addEventListener('DOMContentLoaded', () => {
+            const overlay = document.createElement('div');
+            overlay.id = 'date-overlay';
+            overlay.style.position = 'absolute';
+            overlay.style.bottom = '40px';
+            overlay.style.left = '40px';
+            overlay.style.color = 'white';
+            overlay.style.fontSize = '32px';
+            overlay.style.fontFamily = 'sans-serif';
+            overlay.style.fontWeight = 'bold';
+            overlay.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+            overlay.style.zIndex = '9999';
+            overlay.style.pointerEvents = 'none';
+            document.body.appendChild(overlay);
+        });
+    })();
+    </script>
+    """
+    html_content = html_content.replace("<head>", f"<head>{hijack_script}")
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+    print(f"Starting frame capture...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=[
+            "--disable-web-security", "--allow-file-access-from-files",
+            "--use-gl=angle", "--use-angle=gl", "--ignore-gpu-blocklist", "--disable-gpu-allowlist",
+        ])
+        page = await browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+        
+        abs_html_path = f"file:///{os.path.abspath(html_path)}".replace("\\", "/")
+        await page.goto(abs_html_path, wait_until="networkidle")
+        
+        try:
+            await page.wait_for_function("window.deckglInstance !== undefined", timeout=30000)
+        except Exception:
+            print("Error: Map instance not found.")
+        
+        await asyncio.sleep(10) # Wait for tiles
+        await page.add_style_tag(content=".deck-tooltip { display: none !important; }")
+
+        for i, vs in enumerate(view_states):
+            if i % 50 == 0:
+                print(f"Capturing frame {i}/{len(view_states)}...")
+            
+            # Format date string for the overlay
+            date_str = ""
+            if "timestamp" in vs:
+                dt = datetime.fromtimestamp(int(vs["timestamp"]))
+                date_str = dt.strftime("%A, %B %d, %Y")
+
+            await page.evaluate(f"""
+                if(window.deckglInstance) window.deckglInstance.setProps({{viewState: {json.dumps(vs)}}});
+                const overlay = document.getElementById('date-overlay');
+                if(overlay) overlay.innerText = {json.dumps(date_str)};
+            """)
+            
+            await asyncio.sleep(0.05) 
+            await page.screenshot(path=os.path.join(frames_dir, f"frame_{i:04d}.png"), type='png')
+            
+        await browser.close()
+
+def sanitize_native(val):
+    """Convert numpy types to native Python types for JSON serializability."""
+    if hasattr(val, 'item'): return val.item()
+    if isinstance(val, dict): return {k: sanitize_native(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)): return [sanitize_native(x) for x in val]
+    return val
+
+def create_recording_assets(csv_path=None, artist=None, start_date=None, end_date=None, 
+                           marker_zoom=3.0, swarm_dir=None, assumptions_path=None):
+    """Load data and prepare the PyDeck object and keyframes."""
+    if not csv_path:
+        data_dir = os.getenv("AUTOBIO_LASTFM_DATA_DIR", "data")
+        if os.path.exists(data_dir):
+            files = [f for f in os.listdir(data_dir) if f.endswith("_tracks.csv")]
+            if files: csv_path = os.path.join(data_dir, files[0])
+            else: return None, None
+        else: return None, None
+
+    from analysis_utils import load_listening_data, load_assumptions, apply_swarm_offsets, load_swarm_data
+    df = load_listening_data(csv_path)
+    if df is None: return None, None
+    
+    if 'lat' not in df.columns or df['lat'].isna().all():
+        swarm_dir = swarm_dir or os.getenv("AUTOBIO_SWARM_DIR")
+        assumptions_path = assumptions_path or os.getenv("AUTOBIO_ASSUMPTIONS_FILE", "default_assumptions.json")
+        swarm_df = load_swarm_data(swarm_dir) if swarm_dir and os.path.exists(swarm_dir) else pd.DataFrame()
+        assumptions = load_assumptions(assumptions_path)
+        df = apply_swarm_offsets(df, swarm_df, assumptions)
+
+    df = filter_data(df, artist, start_date, end_date)
+    if df.empty: return None, None
+
+    geo_data = df.groupby(['lat', 'lng', 'city']).size().reset_index(name='Plays')
+    geo_data['elevation_log'] = np.log1p(geo_data['Plays'])
+    max_log = geo_data['elevation_log'].max()
+    
+    dynamic_radius = (50000 / (2 ** (marker_zoom - 1)))
+    geo_data['elevation'] = (geo_data['elevation_log'] / max_log) * (1.4 * dynamic_radius) if max_log > 0 else 0
+    
+    def get_color(val, max_val):
+        ratio = val / max_val if max_val > 0 else 0
+        if ratio < 0.5: r, g, b = 236 + (166 - 236) * (ratio * 2), 226 + (189 - 226) * (ratio * 2), 240 + (219 - 240) * (ratio * 2)
+        else: r, g, b = 166 + (28 - 166) * ((ratio - 0.5) * 2), 189 + (144 - 189) * ((ratio - 0.5) * 2), 219 + (153 - 219) * ((ratio - 0.5) * 2)
+        return [int(r), int(g), int(b), 200]
+
+    geo_data['color'] = geo_data['elevation_log'].apply(lambda x: get_color(x, max_log))
+    
+    # Ensure geodata uses standard Python types for serializability (Issue #46 refinement)
+    # pd.DataFrame.to_dict('records') helps convert to native types
+    records = geo_data.to_dict('records')
+    records = [sanitize_native(r) for r in records]
+
+    layer = pdk.Layer(
+        "ColumnLayer", records,
+        get_position=["lng", "lat"], get_elevation="elevation",
+        elevation_scale=10, radius=float(dynamic_radius),
+        get_fill_color="color", pickable=True,
+    )
+
+    # Sort locations chronologically based on first visit
+    first_visits = df.groupby(['lat', 'lng', 'city'])['timestamp'].min().reset_index()
+    ordered_locations = first_visits.sort_values('timestamp')
+    
+    keyframes = []
+    # Start Global
+    keyframes.append(sanitize_native({
+        "latitude": geo_data['lat'].mean(), "longitude": geo_data['lng'].mean(), "zoom": 2, "pitch": 0, "bearing": 0,
+        "timestamp": ordered_locations['timestamp'].iloc[0]
+    }))
+
+    # Tour through locations
+    for i, (_, row) in enumerate(ordered_locations.iterrows()):
+        angle = (i * 45) % 360
+        keyframes.append(sanitize_native({
+            "latitude": row['lat'], "longitude": row['lng'], "zoom": 11, "pitch": 45 + (i % 3) * 5, "bearing": angle - 180,
+            "timestamp": row['timestamp']
+        }))
+    # End Global
+    keyframes.append(sanitize_native({
+        "latitude": geo_data['lat'].mean(), "longitude": geo_data['lng'].mean(), "zoom": 3, "pitch": 45, "bearing": 0,
+        "timestamp": ordered_locations['timestamp'].iloc[-1]
+    }))
+
+    # Remove timestamp for ViewState but keep it in our keyframes list for interpolation
+    vs_init = keyframes[0].copy()
+    if "timestamp" in vs_init: del vs_init["timestamp"]
+    
+    deck = pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**vs_init), map_style="light")
+    return deck, keyframes
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate a cinematic fly-through video.")
+    parser.add_argument("csv", nargs='?', help="Path to track CSV")
+    parser.add_argument("--output", default="flythrough.mp4", help="Output file")
+    parser.add_argument("--artist", help="Filter by artist name")
+    parser.add_argument("--start_date", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end_date", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--marker_zoom", type=float, default=3.0, help="Marker scaling zoom level")
+    parser.add_argument("--fps", type=int, default=30, help="Frames per second")
+    parser.add_argument("--width", type=int, default=1920, help="Video width")
+    parser.add_argument("--height", type=int, default=1080, help="Video height")
+    parser.add_argument("--assumptions", help="Path to location assumptions JSON")
+    parser.add_argument("--swarm_dir", help="Path to Swarm data directory")
+    parser.add_argument("--keep_frames", action="store_true", help="Keep temp frames")
+    
+    args = parser.parse_args()
+    deck, keyframes = create_recording_assets(args.csv, artist=args.artist, start_date=args.start_date, end_date=args.end_date, marker_zoom=args.marker_zoom, swarm_dir=args.swarm_dir, assumptions_path=args.assumptions)
+    
+    if not deck: return
+    if args.output.endswith(".html"):
+        deck.to_html(args.output)
+        return
+
+    html_temp, frames_dir = "temp_render.html", "temp_frames"
+    deck.to_html(html_temp)
+    
+    full_path = []
+    for i in range(len(keyframes)-1):
+        p1, p2 = keyframes[i], keyframes[i+1]
+        dist = haversine(p1['latitude'], p1['longitude'], p2['latitude'], p2['longitude'])
+        
+        if dist < 10: duration = 1.0  
+        elif dist > 50: duration = 5.0 
+        else: duration = 3.0
+        
+        segment = interpolate_views(p1, p2, int(args.fps * duration))
+        full_path.extend(segment[(1 if i>0 else 0):])
+        
+        if dist > 50:
+            full_path.extend([p2] * (args.fps * 2))
+    
+    try:
+        asyncio.run(capture_frames(html_temp, frames_dir, full_path, viewport=(args.width, args.height)))
+        frames = [os.path.join(frames_dir, f) for f in sorted(os.listdir(frames_dir)) if f.endswith(".png")]
+        if frames:
+            clip = ImageSequenceClip(frames, fps=args.fps)
+            clip.write_videofile(args.output, codec="libx264", audio=False)
+    finally:
+        if os.path.exists(html_temp): os.remove(html_temp)
+        if not args.keep_frames and os.path.exists(frames_dir):
+            import shutil
+            shutil.rmtree(frames_dir)
+
+if __name__ == "__main__":
+    main()
