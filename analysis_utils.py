@@ -122,8 +122,19 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                 data = json.load(f)
                 items = data.get('items', [])
                 for item in items:
-                    created_at = pd.to_datetime(item.get('createdAt'))
-                    ts = int(created_at.timestamp())
+                    raw_created_at = item.get('createdAt')
+                    if raw_created_at is None:
+                        continue
+                        
+                    try:
+                        if isinstance(raw_created_at, (int, float)):
+                            created_at = pd.to_datetime(raw_created_at, unit='s', utc=True)
+                        else:
+                            created_at = pd.to_datetime(raw_created_at, utc=True)
+                        ts = int(created_at.timestamp())
+                    except (ValueError, TypeError):
+                        continue
+                        
                     offset = item.get('timeZoneOffset', 0)
                     venue = item.get('venue') or {}
                     location = venue.get('location') or {}

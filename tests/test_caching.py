@@ -41,8 +41,8 @@ class TestCaching(unittest.TestCase):
     def test_cache_key_changes_on_lastfm_update(self):
         key1 = get_cache_key(self.lastfm_file, self.swarm_dir)
         
-        # Wait a bit to ensure mtime changes
-        time.sleep(0.1)
+        # Wait more than 1s to ensure mtime changes even on 1s resolution filesystems
+        time.sleep(1.1)
         with open(self.lastfm_file, "a") as f:
             f.write("\n")
             
@@ -52,7 +52,7 @@ class TestCaching(unittest.TestCase):
     def test_cache_key_changes_on_swarm_update(self):
         key1 = get_cache_key(self.lastfm_file, self.swarm_dir)
         
-        time.sleep(0.1)
+        time.sleep(1.1)
         with open(os.path.join(self.swarm_dir, "checkins_2.json"), "w") as f:
             f.write('{"items": []}')
             
