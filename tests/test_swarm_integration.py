@@ -99,6 +99,8 @@ class TestSwarmIntegration(unittest.TestCase):
         df = load_swarm_data(self.test_dir)
         self.assertEqual(df.iloc[0]['city'], 'Western Australia')
         self.assertEqual(df.iloc[0]['lat'], -31.9505)
+        # Ensure timestamp is correct (1334000000)
+        self.assertEqual(df.iloc[0]['timestamp'], 1334000000)
 
     def test_swarm_venue_fallback(self):
         # Mock data with only venue name
