@@ -149,7 +149,7 @@ Contributions are welcome! Please follow the Gemini Workflow documented in `GEMI
 
 ## License
 
-MIT
+GNU General Public License v3.0
 
 
 
