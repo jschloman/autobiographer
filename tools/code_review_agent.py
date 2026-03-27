@@ -11,6 +11,8 @@ Required environment variables:
     REPO: Repository in owner/repo format.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys
