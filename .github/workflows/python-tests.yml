@@ -7,6 +7,22 @@ on:
     branches: [ main ]
 
 jobs:
+  lint-pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title follows conventional commits
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR title: $PR_TITLE"
+          if ! echo "$PR_TITLE" | grep -qP '^(feat|fix|perf|refactor|docs|style|test|chore|ci|build)(\(.+\))?(!)?: .+'; then
+            echo "ERROR: PR title must follow Conventional Commits format."
+            echo "Examples: 'feat: add plugin registry', 'fix(broker): handle empty dataframe', 'feat!: breaking api change'"
+            echo "See https://www.conventionalcommits.org"
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
 
