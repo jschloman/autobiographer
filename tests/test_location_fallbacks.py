@@ -1,8 +1,10 @@
 import unittest
-import pandas as pd
-import os
 from datetime import datetime, timezone
-from analysis_utils import get_assumption_location, apply_swarm_offsets, load_assumptions
+
+import pandas as pd
+
+from analysis_utils import apply_swarm_offsets, get_assumption_location, load_assumptions
+
 
 class TestLocationFallbacks(unittest.TestCase):
     @classmethod
@@ -16,9 +18,9 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Perth, AU")
+        self.assertEqual(location["city"], "Perth, AU")
         # Perth is UTC+8
-        self.assertEqual(location['offset'], 480)
+        self.assertEqual(location["offset"], 480)
 
     def test_cairo_fallback(self):
         # March 25, 2022 (During Cairo trip)
@@ -26,9 +28,9 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Cairo, EG")
+        self.assertEqual(location["city"], "Cairo, EG")
         # Cairo is UTC+2
-        self.assertEqual(location['offset'], 120)
+        self.assertEqual(location["offset"], 120)
 
     def test_oslo_svalbard_overlap(self):
         # Aug 14, 2020 - Should be Oslo (first in list)
@@ -36,14 +38,14 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Oslo, NO")
-        
+        self.assertEqual(location["city"], "Oslo, NO")
+
         # Aug 15, 2020 - Should be Svalbard
         dt = datetime(2020, 8, 15, 12, 0, tzinfo=timezone.utc)
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Svalbard, NO")
+        self.assertEqual(location["city"], "Svalbard, NO")
 
     def test_athens_fallback(self):
         # Nov 7, 2020
@@ -51,9 +53,9 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Athens, GR")
+        self.assertEqual(location["city"], "Athens, GR")
         # Athens is UTC+2 in November
-        self.assertEqual(location['offset'], 120)
+        self.assertEqual(location["offset"], 120)
 
     def test_residency_fallback_still_works(self):
         # Oct 12, 2020 (Monday)
@@ -63,7 +65,7 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Co-working Space")
+        self.assertEqual(location["city"], "Co-working Space")
 
     def test_apply_swarm_offsets_comprehensive(self):
         # Create a Last.fm df covering many cases
@@ -73,27 +75,34 @@ class TestLocationFallbacks(unittest.TestCase):
             # 2. Trip: Perth
             {"dt": datetime(2022, 5, 10, 12, 0, tzinfo=timezone.utc), "expected": "Perth, AU"},
             # 3. Residency Work Hours: Oct 12, 2020 10:00 AM EAT (07:00 UTC)
-            {"dt": datetime(2020, 10, 12, 7, 0, tzinfo=timezone.utc), "expected": "Co-working Space"},
+            {
+                "dt": datetime(2020, 10, 12, 7, 0, tzinfo=timezone.utc),
+                "expected": "Co-working Space",
+            },
             # 4. Residency Home 1: Jan 3, 2016 (Nairobi) - SUNDAY to avoid work_hours
             {"dt": datetime(2016, 1, 3, 12, 0, tzinfo=timezone.utc), "expected": "Nairobi, KE"},
             # 5. Residency Home 2: Jan 5, 2020 (Sunday) (Mombasa)
             {"dt": datetime(2020, 1, 5, 12, 0, tzinfo=timezone.utc), "expected": "Mombasa, KE"},
             # 6. Default: 2026 (After residency ends)
-            {"dt": datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc), "expected": "Reykjavik, IS"}
+            {"dt": datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc), "expected": "Reykjavik, IS"},
         ]
-        
-        df = pd.DataFrame({
-            'timestamp': [int(tc['dt'].timestamp()) for tc in test_cases],
-            'date_text': [tc['dt'].strftime('%Y-%m-%d %H:%M') for tc in test_cases],
-            'artist': ['A'] * len(test_cases),
-            'track': ['T'] * len(test_cases)
-        })
-        
-        swarm_df = pd.DataFrame(columns=['timestamp', 'offset', 'city', 'venue', 'lat', 'lng'])
+
+        df = pd.DataFrame(
+            {
+                "timestamp": [int(tc["dt"].timestamp()) for tc in test_cases],
+                "date_text": [tc["dt"].strftime("%Y-%m-%d %H:%M") for tc in test_cases],
+                "artist": ["A"] * len(test_cases),
+                "track": ["T"] * len(test_cases),
+            }
+        )
+
+        swarm_df = pd.DataFrame(columns=["timestamp", "offset", "city", "venue", "lat", "lng"])
         result_df = apply_swarm_offsets(df, swarm_df, self.assumptions)
-        
+
         for i, tc in enumerate(test_cases):
-            self.assertEqual(result_df.iloc[i]['city'], tc['expected'], f"Failed case {i}: {tc['expected']}")
+            self.assertEqual(
+                result_df.iloc[i]["city"], tc["expected"], f"Failed case {i}: {tc['expected']}"
+            )
 
     def test_dublin_fallback(self):
         # Jul 17, 2021 (During Dublin trip)
@@ -101,7 +110,7 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Dublin, IE")
+        self.assertEqual(location["city"], "Dublin, IE")
 
     def test_stockholm_fallback(self):
         # May 17, 2023
@@ -109,7 +118,8 @@ class TestLocationFallbacks(unittest.TestCase):
         ts = int(dt.timestamp())
         location = get_assumption_location(ts, self.assumptions)
         self.assertIsNotNone(location)
-        self.assertEqual(location['city'], "Stockholm, SE")
+        self.assertEqual(location["city"], "Stockholm, SE")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

@@ -39,14 +39,20 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S", "B"]
+"record_flythrough.py" = ["E501"]  # long lines are embedded JS inside f-strings
 
 [tool.mypy]
 python_version = "3.9"
+files = ["autobiographer.py", "analysis_utils.py", "visualize.py", "record_flythrough.py", "find_checkin.py", "tools"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_return_any = true
 disallow_untyped_defs = true
-exclude = ["venv/"]
+
+[[tool.mypy.overrides]]
+module = ["streamlit.*", "pydeck.*", "plotly.*", "geopandas.*", "moviepy.*", "imageio.*", "playwright.*"]
+ignore_errors = true
+follow_imports = "skip"
 
 [tool.bandit]
 exclude_dirs = ["venv", "tests"]
