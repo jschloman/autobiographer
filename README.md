@@ -132,20 +132,101 @@ Additional utility scripts are available in the `tools/` directory:
 
 ## Project Structure
 
-- `autobiographer.py`: Core script for API interaction and data fetching.
-- `visualize.py`: Streamlit dashboard implementation.
-- `analysis_utils.py`: Shared data processing and analysis logic.
-- `notebooks/`: Ready-to-use Jupyter notebooks.
-- `tools/`: Utility scripts for video generation and post-processing.
-- `data/`: Default local storage for your listening history CSVs.
-- `tests/`: Comprehensive test suite (90%+ coverage).
+```
+autobiographer.py       # Last.fm API fetch + data save CLI
+visualize.py            # Streamlit dashboard (assembles views from plugins)
+analysis_utils.py       # Shared data processing and caching logic
+core/
+  broker.py             # DataBroker: loads plugins, merges what-when + where-when
+plugins/
+  sources/
+    base.py             # SourcePlugin ABC + validate_schema()
+    __init__.py         # REGISTRY + @register decorator + load_builtin_plugins()
+    lastfm/loader.py    # Last.fm source plugin
+    swarm/loader.py     # Foursquare/Swarm source plugin
+notebooks/              # Jupyter notebooks for custom analysis
+tools/                  # Utility scripts (audio muxing, etc.)
+data/                   # Local data storage (CSVs, cache, Swarm JSON exports)
+tests/                  # Pytest suite (80%+ coverage)
+```
+
+## Plugin System
+
+Data sources are implemented as `SourcePlugin` subclasses and self-register via a decorator. The `DataBroker` loads them at runtime and makes their data available to the dashboard.
+
+### Adding a source plugin
+
+**1. Create the plugin file**, e.g. `plugins/sources/letterboxd/loader.py`:
+
+```python
+from __future__ import annotations
+from typing import Any
+import pandas as pd
+from plugins.sources import register
+from plugins.sources.base import SourcePlugin, validate_schema
+
+@register
+class LetterboxdPlugin(SourcePlugin):
+    PLUGIN_TYPE = "what-when"   # or "where-when"
+    PLUGIN_ID = "letterboxd"
+    DISPLAY_NAME = "Letterboxd Film Diary"
+
+    def get_config_fields(self) -> list[dict[str, Any]]:
+        return [{"key": "data_path", "label": "Letterboxd CSV export", "type": "path"}]
+
+    def load(self, config: dict[str, Any]) -> pd.DataFrame:
+        # Load your data, then map to the normalized schema columns:
+        #   what-when: timestamp, label, sublabel, category, source_id
+        #   where-when: timestamp, lat, lng, place_name, place_type, source_id
+        df = ...  # your loading logic
+        df = df.assign(label=df["film"], sublabel=df["director"],
+                       category=df["year"], source_id=self.PLUGIN_ID)
+        validate_schema(df, self.PLUGIN_TYPE)
+        return df
+```
+
+**2. Register it** in `plugins/sources/__init__.py`:
+
+```python
+def load_builtin_plugins() -> None:
+    import plugins.sources.lastfm.loader   # noqa: F401
+    import plugins.sources.swarm.loader    # noqa: F401
+    import plugins.sources.letterboxd.loader  # noqa: F401  ← add this
+```
+
+**3. Add tests** in `tests/test_source_plugins.py` using the existing `TestLastFmPlugin` class as a template. Mock your data loader to keep tests fast and offline.
+
+### Plugin types and required schema columns
+
+| `PLUGIN_TYPE` | Required columns |
+|---|---|
+| `what-when` | `timestamp`, `label`, `sublabel`, `category`, `source_id` |
+| `where-when` | `timestamp`, `lat`, `lng`, `place_name`, `place_type`, `source_id` |
+
+`validate_schema()` raises `ValueError` at load time if any required column is absent, so errors surface immediately.
+
+### Using the DataBroker directly
+
+```python
+from plugins.sources import load_builtin_plugins, REGISTRY
+from core.broker import DataBroker
+
+load_builtin_plugins()
+broker = DataBroker()
+broker.load(REGISTRY["lastfm"](), {"data_path": "data/tracks.csv"})
+broker.load(REGISTRY["swarm"](), {"swarm_dir": "data/swarm"})
+
+df = broker.get_merged_frame(assumptions=my_assumptions)  # temporally joined
+broker.is_type_available("where-when")  # → True
+```
 
 ## Contributing
 
-Contributions are welcome! Please follow the Gemini Workflow documented in `GEMINI.md`:
-1. Create a descriptive feature branch.
-2. Implement your changes with test coverage.
-3. Submit a Pull Request.
+Contributions are welcome! Please follow the engineering standards in `CLAUDE.md`:
+1. Create a descriptive feature branch using [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `perf:`, etc.).
+2. Implement your changes with test coverage (80% minimum).
+3. Run the local quality gate before pushing: `ruff check . && ruff format --check . && mypy && pytest --cov=. --cov-fail-under=80 tests/`
+4. Submit a Pull Request — the PR title must also follow Conventional Commits format.
 
 ## License
 
