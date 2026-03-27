@@ -97,45 +97,41 @@ def _call_claude(standards: str, diff: str, api_key: str) -> str:
     Returns:
         Claude's review as a markdown string.
     """
-    import urllib.request
+    import anthropic
 
-    payload = {
-        "model": "claude-sonnet-4-6",
-        "max_tokens": 2048,
-        "system": (
-            "You are an expert code reviewer enforcing the engineering standards "
-            "in the document below. Review the provided diff strictly against these "
-            "standards. Be direct and specific. Reference file names and line numbers "
-            "from the diff where relevant.\n\n"
-            "Format your response as:\n"
-            "## Summary\n"
-            "<1-2 sentence overall assessment>\n\n"
-            "## Issues\n"
-            "<Blocking issues — violations of the standards. If none, write 'None.'>\n\n"
-            "## Suggestions\n"
-            "<Non-blocking improvements. If none, write 'None.'>\n\n"
-            f"---\n\n# Engineering Standards\n\n{standards}"
-        ),
-        "messages": [
+    # Truncate very large diffs to avoid exceeding context limits.
+    max_diff_chars = 30_000
+    if len(diff) > max_diff_chars:
+        diff = diff[:max_diff_chars] + "\n\n[diff truncated]"
+
+    system_prompt = (
+        "You are an expert code reviewer enforcing the engineering standards "
+        "in the document below. Review the provided diff strictly against these "
+        "standards. Be direct and specific. Reference file names and line numbers "
+        "from the diff where relevant.\n\n"
+        "Format your response as:\n"
+        "## Summary\n"
+        "<1-2 sentence overall assessment>\n\n"
+        "## Issues\n"
+        "<Blocking issues — violations of the standards. If none, write 'None.'>\n\n"
+        "## Suggestions\n"
+        "<Non-blocking improvements. If none, write 'None.'>\n\n"
+        f"---\n\n# Engineering Standards\n\n{standards}"
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2048,
+        system=system_prompt,
+        messages=[
             {
                 "role": "user",
                 "content": f"Please review this pull request diff:\n\n```diff\n{diff}\n```",
             }
         ],
-    }
-
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages", data=data, method="POST"
     )
-    req.add_header("x-api-key", api_key)
-    req.add_header("anthropic-version", "2023-06-01")
-    req.add_header("content-type", "application/json")
-
-    with urllib.request.urlopen(req) as resp:
-        result = json.loads(resp.read())
-
-    return result["content"][0]["text"]
+    return message.content[0].text
 
 
 def _post_review(
