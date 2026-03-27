@@ -18,7 +18,7 @@ This document serves as the foundational mandate for all development work perfor
 
 ## 3. Data & Privacy (Mandatory)
 
-*   **Anonymity**: Never hardcode personal data (locations, usernames, credentials) into the codebase. 
+*   **Anonymity**: Never hardcode personal data (locations, usernames, credentials) into the codebase.
 *   **Externalize Assumptions**: Any personal identifying data or location assumptions must reside in external JSON files (e.g., `default_assumptions.json.example`) or environment variables.
 *   **Credential Protection**: Use the `AUTOBIO_` environment variable prefix for all configuration. Never log or print API keys or secrets.
 
@@ -40,4 +40,3 @@ This document serves as the foundational mandate for all development work perfor
 2.  **Strategy**: Formulate a plan that prioritizes the least disruptive, most maintainable change.
 3.  **Act**: Apply surgical edits. Use `replace` for targeted updates to large files.
 4.  **Validate**: Run tests, check linting, and verify manual use cases.
-
