@@ -17,3 +17,37 @@ tag_format = "v{version}"
 allowed_tags = ["feat", "fix", "perf", "refactor", "docs", "style", "test", "chore", "ci", "build"]
 minor_tags = ["feat"]
 patch_tags = ["fix", "perf"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+exclude = ["venv", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "S",   # flake8-bandit (security)
+    "UP",  # pyupgrade
+]
+ignore = [
+    "S101",  # assert statements (used in tests)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+exclude = ["venv/"]
+
+[tool.bandit]
+exclude_dirs = ["venv", "tests"]
+skips = ["B101"]  # assert statements
