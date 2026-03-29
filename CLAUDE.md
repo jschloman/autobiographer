@@ -43,30 +43,45 @@ This document serves as the foundational mandate for all development work perfor
 
 ## 7. Local Quality Gate (Required Before Every Commit or Push)
 
-All of the following must pass with zero errors before any commit or push to GitHub. AI agents must run these in order and fix all failures before proceeding.
+**This gate is mandatory — no exceptions.** All checks must pass with zero errors before any `git push` or PR submission. CI runs the same checks; a failing CI is a sign the gate was skipped locally. Fix locally first, then push.
 
-```bash
-# 1. Lint and format check
-ruff check .
-ruff format --check .
+AI agents must run these steps in order and fix every failure before proceeding. Do not open or update a PR until the full gate passes locally.
 
-# 2. Type checking
-mypy .
-
-# 3. Security scan
-bandit -r . -x venv,tests
-
-# 4. Tests with coverage
-pytest --cov=. --cov-report=term-missing --cov-fail-under=80 tests/
-```
-
-To auto-fix ruff lint and format issues before checking:
+### Step 1 — Auto-fix what can be fixed automatically
 ```bash
 ruff check --fix .
 ruff format .
 ```
 
-Install all tools into the venv if not present:
+### Step 2 — Verify everything is clean
 ```bash
-pip install ruff mypy bandit
+# Lint and format
+ruff check .
+ruff format --check .
+
+# Type checking
+mypy .
+
+# Tests with coverage (must stay above 80%)
+pytest --cov=. --cov-report=term-missing --cov-fail-under=80 tests/
+```
+
+All four commands must exit with code 0. If any fail, fix the reported errors and re-run the full gate from Step 1 before pushing.
+
+### Common failure patterns and fixes
+
+| Failure | Fix |
+|---|---|
+| `ruff` import order / formatting | Run `ruff check --fix . && ruff format .` |
+| `ruff` unused import (`F401`) | Remove the import or add `# noqa: F401` only if intentional |
+| `ruff` unused variable (`F841`, `B007`) | Remove assignment or rename to `_varname` |
+| `ruff` line too long (`E501`) | Extract to a named variable or add file to `per-file-ignores` in `pyproject.toml` |
+| `mypy` type mismatch | Fix the type annotation or add an explicit cast; do not use `# type: ignore` without a comment explaining why |
+| `pytest` test failure | Fix the code or test — never skip or delete a failing test |
+| `pytest` coverage below 80% | Add tests for the new code path |
+
+### Installing tools
+
+```bash
+pip install ruff mypy types-requests
 ```
