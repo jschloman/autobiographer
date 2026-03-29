@@ -1,3 +1,7 @@
+"""Unit tests for the Autobiographer dashboard pages."""
+
+from __future__ import annotations
+
 import os
 import shutil
 import unittest
@@ -5,17 +9,17 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
 
-from visualize import (
-    main,
-    render_insights_and_narrative,
-    render_spatial_analysis,
-    render_timeline_analysis,
-    render_top_charts,
-)
+from pages.insights import render_insights_and_narrative
+from pages.music import render_timeline_analysis
+from pages.overview import render_top_charts
+from pages.places import render_spatial_analysis
+from visualize import main
 
 
 class TestVisualize(unittest.TestCase):
-    def setUp(self):
+    """Tests for page render functions and the dashboard entrypoint."""
+
+    def setUp(self) -> None:
         self.test_dir = "data_test"
         os.makedirs(self.test_dir, exist_ok=True)
         self.test_csv = os.path.join(self.test_dir, "test_user_tracks.csv")
@@ -37,7 +41,7 @@ class TestVisualize(unittest.TestCase):
         self.df["date_text"] = pd.to_datetime(self.df["date_text"])
         self.df.to_csv(self.test_csv, index=False)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
@@ -49,17 +53,24 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.dataframe")
     @patch("streamlit.slider")
     def test_render_spatial_analysis(
-        self, mock_slider, mock_df, mock_deck, mock_cols, mock_date, mock_select, mock_header
-    ):
+        self,
+        mock_slider: MagicMock,
+        mock_df: MagicMock,
+        mock_deck: MagicMock,
+        mock_cols: MagicMock,
+        mock_date: MagicMock,
+        mock_select: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_select.return_value = "All"
         mock_date.return_value = [
             self.df["date_text"].min().date(),
             self.df["date_text"].max().date(),
         ]
         mock_cols.side_effect = [
-            [MagicMock(), MagicMock()],  # col_f1, col_f2
-            [MagicMock(), MagicMock(), MagicMock()],  # col_a, col_b, col_c
-            [MagicMock(), MagicMock()],  # fly_col1, fly_col2
+            [MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock()],
         ]
         mock_slider.return_value = 3.0
 
@@ -79,8 +90,13 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.columns")
     @patch("streamlit.plotly_chart")
     def test_render_top_charts(
-        self, mock_plotly, mock_columns, mock_slider, mock_radio, mock_header
-    ):
+        self,
+        mock_plotly: MagicMock,
+        mock_columns: MagicMock,
+        mock_slider: MagicMock,
+        mock_radio: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_radio.return_value = "artist"
         mock_slider.return_value = 10
         mock_columns.return_value = [MagicMock(), MagicMock()]
@@ -96,8 +112,12 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.plotly_chart")
     @patch("streamlit.subheader")
     def test_render_timeline_analysis(
-        self, mock_subheader, mock_plotly, mock_selectbox, mock_header
-    ):
+        self,
+        mock_subheader: MagicMock,
+        mock_plotly: MagicMock,
+        mock_selectbox: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_selectbox.return_value = "Daily"
 
         render_timeline_analysis(self.df)
@@ -116,22 +136,21 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.metric")
     def test_render_insights_and_narrative(
         self,
-        mock_metric,
-        mock_tabs,
-        mock_df,
-        mock_plotly,
-        mock_cols,
-        mock_select,
-        mock_subheader,
-        mock_header,
-    ):
+        mock_metric: MagicMock,
+        mock_tabs: MagicMock,
+        mock_df: MagicMock,
+        mock_plotly: MagicMock,
+        mock_cols: MagicMock,
+        mock_select: MagicMock,
+        mock_subheader: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_select.return_value = "All"
-        # Provide lists for each st.columns call
         mock_cols.side_effect = [
-            [MagicMock()] * 4,  # col_filter1-4
-            [MagicMock()] * 2,  # col_top1-2
-            [MagicMock()] * 2,  # col_pat1-2
-            [MagicMock()] * 2,  # col_nar1-2
+            [MagicMock()] * 4,
+            [MagicMock()] * 2,
+            [MagicMock()] * 2,
+            [MagicMock()] * 2,
         ]
         mock_tabs.return_value = [MagicMock(), MagicMock(), MagicMock()]
 
@@ -141,71 +160,21 @@ class TestVisualize(unittest.TestCase):
         self.assertTrue(mock_select.called)
 
     @patch("streamlit.set_page_config")
-    @patch("streamlit.title")
-    @patch("streamlit.sidebar.selectbox")
-    @patch("visualize.load_listening_data")
-    @patch("streamlit.tabs")
-    @patch("streamlit.sidebar.header")
-    @patch("streamlit.sidebar.text_input")
-    @patch("streamlit.sidebar.date_input")
-    @patch("streamlit.sidebar.button")
-    @patch("streamlit.spinner")
-    def test_main_success(
+    @patch("streamlit.navigation")
+    def test_main_configures_page_and_runs_navigation(
         self,
-        mock_spinner,
-        mock_button,
-        mock_date_input,
-        mock_text_input,
-        mock_sidebar_header,
-        mock_tabs,
-        mock_load,
-        mock_selectbox,
-        mock_title,
-        mock_config,
-    ):
-        original_exists = os.path.exists
-        mock_date_input.return_value = [
-            self.df["date_text"].min().date(),
-            self.df["date_text"].max().date(),
-        ]
-        mock_button.return_value = False
+        mock_nav: MagicMock,
+        mock_config: MagicMock,
+    ) -> None:
+        mock_pg = MagicMock()
+        mock_nav.return_value = mock_pg
 
-        mock_spinner.return_value.__enter__.return_value = None
-        mock_spinner.return_value.__exit__.return_value = None
+        with patch("visualize.render_sidebar"):
+            main()
 
-        with (
-            patch("os.listdir") as mock_listdir,
-            patch("visualize.render_top_charts"),
-            patch("visualize.render_timeline_analysis"),
-            patch("visualize.render_spatial_analysis"),
-            patch("visualize.render_insights_and_narrative"),
-        ):
-            with patch("os.path.exists") as mock_exists:
-
-                def side_effect(path):
-                    if path == "data":
-                        return True
-                    if path == "default_assumptions.json.example":
-                        return True
-                    return original_exists(path)
-
-                mock_exists.side_effect = side_effect
-
-                mock_listdir.return_value = ["test_user_tracks.csv"]
-                mock_selectbox.return_value = "test_user_tracks.csv"
-                mock_text_input.side_effect = ["data", "", "default_assumptions.json.example"]
-                mock_load.return_value = self.df
-
-                # Updated to 4 tabs
-                tab1, tab2, tab3, tab4 = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-                mock_tabs.return_value = [tab1, tab2, tab3, tab4]
-
-                main()
-
-        mock_title.assert_called_with("Autobiographer: Interactive Data Explorer")
-        mock_load.assert_called_once()
-        self.assertEqual(len(mock_tabs.return_value), 4)
-        self.assertTrue(mock_date_input.called)
+        mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")
+        mock_nav.assert_called_once()
+        mock_pg.run.assert_called_once()
 
 
 if __name__ == "__main__":
