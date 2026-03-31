@@ -54,7 +54,8 @@ def _read_config() -> dict[str, str]:
         return {}
     try:
         with open(_CONFIG_PATH) as f:
-            return json.load(f)
+            result: dict[str, str] = json.load(f)
+            return result
     except Exception:
         return {}
 

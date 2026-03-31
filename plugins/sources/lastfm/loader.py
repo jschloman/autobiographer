@@ -63,8 +63,8 @@ class LastFmPlugin(SourcePlugin):
         data_path: str = config["data_path"]
         df = load_listening_data(data_path)
 
-        if df.empty:
-            return df
+        if df is None or df.empty:
+            return pd.DataFrame()
 
         # Add normalized schema columns alongside originals so downstream
         # views can use either naming convention.
