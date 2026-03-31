@@ -5,12 +5,9 @@ description = "A personal data platform for reconstructing the narrative arc of 
 requires-python = ">=3.9"
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
 branch = "main"
-changelog_file = "CHANGELOG.md"
 build_command = ""
 upload_to_pypi = false
-commit_message = "chore(release): {version} [skip ci]"
 tag_format = "v{version}"
 
 [tool.semantic_release.commit_parser_options]
