@@ -46,6 +46,7 @@ class SourcePlugin(ABC):
     PLUGIN_TYPE: str  # "what-when" or "where-when"
     PLUGIN_ID: str  # unique identifier, e.g. "lastfm", "swarm"
     DISPLAY_NAME: str  # human-readable name for the UI
+    ICON: str = ":material/database:"  # Material icon token shown in the sidebar
 
     @abstractmethod
     def get_config_fields(self) -> list[dict[str, Any]]:

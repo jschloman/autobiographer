@@ -22,6 +22,7 @@ class SwarmPlugin(SourcePlugin):
     PLUGIN_TYPE = "where-when"
     PLUGIN_ID = "swarm"
     DISPLAY_NAME = "Foursquare / Swarm Check-ins"
+    ICON = ":material/location_on:"
 
     def get_config_fields(self) -> list[dict[str, Any]]:
         """Declare sidebar config fields for the Swarm plugin.

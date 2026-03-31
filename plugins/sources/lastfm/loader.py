@@ -24,6 +24,7 @@ class LastFmPlugin(SourcePlugin):
     PLUGIN_TYPE = "what-when"
     PLUGIN_ID = "lastfm"
     DISPLAY_NAME = "Last.fm Music History"
+    ICON = ":material/headphones:"
 
     def get_config_fields(self) -> list[dict[str, Any]]:
         """Declare sidebar config fields for the Last.fm plugin.

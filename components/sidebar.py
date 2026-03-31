@@ -231,13 +231,22 @@ def render_sidebar() -> None:
     load_builtin_plugins()
     _load_config_into_session_state()
 
-    st.sidebar.header("Data Sources")
+    st.sidebar.markdown("**DATA SOURCES**")
 
     configs: dict[str, dict[str, str]] = {}
     for plugin_id, plugin_cls in REGISTRY.items():
         plugin = plugin_cls()
-        st.sidebar.subheader(plugin.DISPLAY_NAME)
-        configs[plugin_id] = _render_plugin_config(plugin_id, plugin.get_config_fields())
+        fields = plugin.get_config_fields()
+
+        # Auto-expand the section when the primary path is not yet configured
+        # so first-time users immediately see they need to fill it in.
+        primary_key = f"{plugin_id}_{fields[0]['key']}" if fields else ""
+        is_configured = bool(st.session_state.get(primary_key, "").strip())
+
+        with st.sidebar.expander(
+            f"{plugin.ICON}  {plugin.DISPLAY_NAME}", expanded=not is_configured
+        ):
+            configs[plugin_id] = _render_plugin_config(plugin_id, fields)
 
     # --- Data loading ---------------------------------------------------------
     lastfm_cfg = configs.get("lastfm", {})
