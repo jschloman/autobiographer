@@ -150,13 +150,94 @@ data/                   # Local data storage (CSVs, cache, Swarm JSON exports)
 tests/                  # Pytest suite (80%+ coverage)
 ```
 
-## Plugin System
+## Plugin Architecture
 
-Data sources are implemented as `SourcePlugin` subclasses and self-register via a decorator. The `DataBroker` loads them at runtime and makes their data available to the dashboard.
+Autobiographer is built on two non-negotiable design principles that apply to every source plugin without exception.
+
+### 1. Data Sovereignty
+
+Each `SourcePlugin` is the sole authority over its own data. A plugin **knows**:
+
+- Its own raw data format and where to read it from.
+- How to normalise that data into the canonical schema.
+
+A plugin **does not know**:
+
+- That any other source exists.
+- How its output will be filtered, joined, or merged with other sources.
+- Any foreign column names, keys, or schemas.
+
+All cross-source logic — temporal joins, geographic enrichment, correlation — lives exclusively in `DataBroker`. This makes every plugin independently testable, replaceable, and comprehensible in isolation.
+
+```
+┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────────┐
+│  LastFmPlugin        │   │  SwarmPlugin          │   │  LetterboxdPlugin    │
+│  load() → DataFrame  │   │  load() → DataFrame   │   │  load() → DataFrame  │
+│                      │   │                       │   │                      │
+│  No knowledge of     │   │  No knowledge of      │   │  No knowledge of     │
+│  other sources       │   │  other sources        │   │  other sources       │
+└──────────┬───────────┘   └──────────┬────────────┘   └──────────┬───────────┘
+           └──────────────────────────┼────────────────────────────┘
+                                      ▼
+                               ┌─────────────┐
+                               │  DataBroker │  ← all joining & merging here
+                               └─────────────┘
+```
+
+### 2. Download-then-Display
+
+Every plugin operates in two strictly separate phases. **They must never be mixed.**
+
+#### Phase 1 — Collection (download script)
+
+A standalone CLI script fetches data from the external source and writes it to a local file under `data/`. This is the **only** place credentials, API keys, and HTTP calls exist in the codebase.
+
+```bash
+# Example: save your Letterboxd diary export locally
+python -m autobiographer.sync letterboxd --export-path ~/Downloads/letterboxd.zip
+```
+
+The script runs once (or whenever the user wants to refresh their data) and produces a file the plugin can read indefinitely without a network connection.
+
+#### Phase 2 — Display (plugin `load()`)
+
+`SourcePlugin.load()` reads **only** from the previously downloaded local file. It makes **zero** outbound network calls, opens **no** sockets, and requires **no** credentials at runtime. If the local file is absent it raises `FileNotFoundError` with a clear message directing the user to run the download script — it never falls back to a live fetch.
+
+```
+┌─────────────────────────────────┐     ┌──────────────────────────────────┐
+│  COLLECTION  (run once offline) │     │  DISPLAY  (Streamlit runtime)    │
+│                                 │     │                                   │
+│  python -m autobiographer.sync  │────▶│  LetterboxdPlugin.load()         │
+│    letterboxd                   │     │    reads data/letterboxd.csv      │
+│                                 │     │    — zero network calls           │
+│  credentials live here only     │     │                                   │
+└─────────────────────────────────┘     └──────────────────────────────────┘
+```
 
 ### Adding a source plugin
 
-**1. Create the plugin file**, e.g. `plugins/sources/letterboxd/loader.py`:
+Follow these four steps. The contract above applies to every plugin — no exceptions.
+
+**1. Create the download script**, e.g. `autobiographer/sync/letterboxd.py`:
+
+```python
+"""Letterboxd: save diary export to data/letterboxd.csv (run once offline)."""
+import argparse, zipfile, pathlib
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--export-path", required=True, help="Path to the Letterboxd ZIP")
+    args = parser.parse_args()
+    with zipfile.ZipFile(args.export_path) as zf:
+        zf.extract("diary.csv", "data/")
+    pathlib.Path("data/letterboxd.csv").rename(pathlib.Path("data/letterboxd_diary.csv"))
+    print("Saved → data/letterboxd_diary.csv")
+
+if __name__ == "__main__":
+    main()
+```
+
+**2. Create the plugin file**, e.g. `plugins/sources/letterboxd/loader.py`:
 
 ```python
 from __future__ import annotations
@@ -167,43 +248,76 @@ from plugins.sources.base import SourcePlugin, validate_schema
 
 @register
 class LetterboxdPlugin(SourcePlugin):
-    PLUGIN_TYPE = "what-when"   # or "where-when"
+    PLUGIN_TYPE = "what-when"
     PLUGIN_ID = "letterboxd"
     DISPLAY_NAME = "Letterboxd Film Diary"
+    ICON = ":material/movie:"
 
     def get_config_fields(self) -> list[dict[str, Any]]:
-        return [{"key": "data_path", "label": "Letterboxd CSV export", "type": "path"}]
+        return [
+            {
+                "key": "data_path",
+                "label": "Letterboxd diary CSV",
+                "type": "file_path",
+                "file_types": [("CSV files", "*.csv"), ("All files", "*.*")],
+            }
+        ]
 
     def load(self, config: dict[str, Any]) -> pd.DataFrame:
-        # Load your data, then map to the normalized schema columns:
-        #   what-when: timestamp, label, sublabel, category, source_id
-        #   where-when: timestamp, lat, lng, place_name, place_type, source_id
-        df = ...  # your loading logic
-        df = df.assign(label=df["film"], sublabel=df["director"],
-                       category=df["year"], source_id=self.PLUGIN_ID)
+        """Load previously downloaded Letterboxd diary from a local CSV.
+
+        Zero network calls are made here. Raises FileNotFoundError if the
+        export file has not been downloaded yet.
+        """
+        data_path: str = config["data_path"]
+        if not data_path:
+            return pd.DataFrame()
+        # load() reads local data only — no REST calls, no credentials
+        df = pd.read_csv(data_path)
+        df = df.assign(
+            label=df["Name"],
+            sublabel=df["Name"],
+            category=df["Year"].astype(str),
+            source_id=self.PLUGIN_ID,
+        )
         validate_schema(df, self.PLUGIN_TYPE)
         return df
 ```
 
-**2. Register it** in `plugins/sources/__init__.py`:
+**3. Register it** in `plugins/sources/__init__.py`:
 
 ```python
 def load_builtin_plugins() -> None:
-    import plugins.sources.lastfm.loader   # noqa: F401
-    import plugins.sources.swarm.loader    # noqa: F401
+    import plugins.sources.lastfm.loader      # noqa: F401
+    import plugins.sources.swarm.loader       # noqa: F401
     import plugins.sources.letterboxd.loader  # noqa: F401  ← add this
 ```
 
-**3. Add tests** in `tests/test_source_plugins.py` using the existing `TestLastFmPlugin` class as a template. Mock your data loader to keep tests fast and offline.
+**4. Add tests** in `tests/test_source_plugins.py` following the `TestLastFmPlugin` pattern. Always mock the file-read call — tests must never touch the network or require local data files.
 
-### Plugin types and required schema columns
+### Config field types
+
+`get_config_fields()` returns field descriptors rendered as path selectors in the sidebar. Each plugin's selectors are grouped in their own collapsible section.
+
+| `type` | Widget | Use for |
+|---|---|---|
+| `"file_path"` | Text input + file picker | Single export files (CSV, JSON, ZIP) |
+| `"dir_path"` | Text input + folder picker | Export directories with multiple files |
+| `"text"` | Plain text input | Non-path settings |
+| `"toggle"` | Checkbox | Boolean options |
+
+Add `"file_types": [("CSV files", "*.csv")]` to any `file_path` field to pre-filter the picker dialog.
+
+Selected paths are persisted to `data/config.json` so they survive application restarts.
+
+### Plugin schema
 
 | `PLUGIN_TYPE` | Required columns |
 |---|---|
 | `what-when` | `timestamp`, `label`, `sublabel`, `category`, `source_id` |
 | `where-when` | `timestamp`, `lat`, `lng`, `place_name`, `place_type`, `source_id` |
 
-`validate_schema()` raises `ValueError` at load time if any required column is absent, so errors surface immediately.
+`validate_schema()` raises `ValueError` at load time if any required column is absent.
 
 ### Using the DataBroker directly
 
