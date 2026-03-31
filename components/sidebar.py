@@ -231,7 +231,9 @@ def render_sidebar() -> None:
     load_builtin_plugins()
     _load_config_into_session_state()
 
-    st.sidebar.markdown("**DATA SOURCES**")
+    st.sidebar.markdown(
+        '<p class="autobio-section-header">Data Sources</p>', unsafe_allow_html=True
+    )
 
     configs: dict[str, dict[str, str]] = {}
     for plugin_id, plugin_cls in REGISTRY.items():
@@ -264,7 +266,9 @@ def render_sidebar() -> None:
 
     assumptions = load_assumptions(assumptions_path)
 
-    st.sidebar.header("Cache Management")
+    st.sidebar.markdown(
+        '<p class="autobio-section-header">Cache Management</p>', unsafe_allow_html=True
+    )
     cache_key = get_cache_key(file_path, swarm_dir, assumptions_path)
     df: pd.DataFrame | None = get_cached_data(cache_key)
 
@@ -301,7 +305,9 @@ def render_sidebar() -> None:
             st.rerun()
 
     if df is not None:
-        st.sidebar.header("Global Filters")
+        st.sidebar.markdown(
+            '<p class="autobio-section-header">Global Filters</p>', unsafe_allow_html=True
+        )
         min_date = df["date_text"].min().date()
         max_date = df["date_text"].max().date()
         date_range = st.sidebar.date_input("Filter by Date Range", [min_date, max_date])
