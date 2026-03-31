@@ -26,45 +26,57 @@ from visualize import main
 class TestPathInput(unittest.TestCase):
     """Tests for the _path_input and _render_plugin_config sidebar helpers."""
 
-    def _make_sidebar_mocks(self, mock_sidebar: MagicMock) -> tuple[MagicMock, MagicMock]:
-        """Return (col1, col2) mocks for sidebar.columns() calls."""
+    def _make_st_mocks(
+        self, mock_columns: MagicMock, mock_button: MagicMock
+    ) -> tuple[MagicMock, MagicMock]:
+        """Return (col1, col2) column mocks with browse button not clicked."""
         col1, col2 = MagicMock(), MagicMock()
-        mock_sidebar.columns.return_value = [col1, col2]
-        col2.button.return_value = False  # browse button not clicked
+        mock_columns.return_value = [col1, col2]
+        mock_button.return_value = False
+        col2.button.return_value = False
         return col1, col2
 
     @patch("components.sidebar._TKINTER_AVAILABLE", True)
-    @patch("streamlit.sidebar")
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
     @patch("streamlit.session_state", {})
-    def test_path_input_uses_default_when_no_session_state(self, mock_sidebar: MagicMock) -> None:
-        self._make_sidebar_mocks(mock_sidebar)
+    def test_path_input_uses_default_when_no_session_state(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        self._make_st_mocks(mock_columns, mock_button)
         result = _path_input("My Label", "test_key", default="/some/default")
         self.assertEqual(result, "/some/default")
 
     @patch("components.sidebar._TKINTER_AVAILABLE", True)
-    @patch("streamlit.sidebar")
-    def test_path_input_returns_existing_session_state(self, mock_sidebar: MagicMock) -> None:
-        self._make_sidebar_mocks(mock_sidebar)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    def test_path_input_returns_existing_session_state(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        self._make_st_mocks(mock_columns, mock_button)
         with patch("streamlit.session_state", {"test_key2": "/existing/path"}):
             result = _path_input("My Label", "test_key2", default="/default")
         self.assertEqual(result, "/existing/path")
 
     @patch("components.sidebar._TKINTER_AVAILABLE", False)
-    @patch("streamlit.sidebar")
+    @patch("streamlit.text_input")
     @patch("streamlit.session_state", {})
-    def test_path_input_fallback_without_tkinter(self, mock_sidebar: MagicMock) -> None:
-        # Without tkinter, renders a plain text_input and no browse button.
+    def test_path_input_fallback_without_tkinter(self, mock_text_input: MagicMock) -> None:
+        # Without tkinter, renders a plain st.text_input (no browse button).
         _path_input("Label", "nontk_key", default="")
-        mock_sidebar.text_input.assert_called_once()
-        call_kwargs = mock_sidebar.text_input.call_args
+        mock_text_input.assert_called_once()
+        call_kwargs = mock_text_input.call_args
         self.assertEqual(call_kwargs[1]["key"], "nontk_key")
 
     @patch("components.sidebar._TKINTER_AVAILABLE", True)
-    @patch("streamlit.sidebar")
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
     @patch("streamlit.session_state", {})
-    def test_render_plugin_config_collects_all_fields(self, mock_sidebar: MagicMock) -> None:
+    def test_render_plugin_config_collects_all_fields(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
         col1, col2 = MagicMock(), MagicMock()
-        mock_sidebar.columns.return_value = [col1, col2]
+        mock_columns.return_value = [col1, col2]
         col2.button.return_value = False
 
         fields = [

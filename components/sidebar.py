@@ -144,7 +144,10 @@ def _path_input(
         _write_config_entry(session_key, str(st.session_state.get(session_key, "")))
 
     if _TKINTER_AVAILABLE:
-        col1, col2 = st.sidebar.columns([4, 1])
+        # Use st.columns / st.text_input (not st.sidebar.*) so widgets render
+        # inside whatever container is currently active — critically, inside the
+        # expander when called from _render_plugin_config.
+        col1, col2 = st.columns([4, 1])
         col1.text_input(label, key=session_key, on_change=_on_change)
 
         if col2.button("...", key=f"browse_{session_key}", help="Browse for path"):
@@ -188,7 +191,7 @@ def _path_input(
                 st.session_state[pending_key] = _result[0]
                 st.rerun()
     else:
-        st.sidebar.text_input(label, key=session_key, on_change=_on_change)
+        st.text_input(label, key=session_key, on_change=_on_change)
 
     return str(st.session_state.get(session_key, default))
 
