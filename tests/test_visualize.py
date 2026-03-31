@@ -1,3 +1,7 @@
+"""Unit tests for the Autobiographer dashboard pages."""
+
+from __future__ import annotations
+
 import os
 import shutil
 import unittest
@@ -5,17 +9,151 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
 
-from visualize import (
-    main,
-    render_insights_and_narrative,
-    render_spatial_analysis,
-    render_timeline_analysis,
-    render_top_charts,
+from components.sidebar import (
+    _load_config_into_session_state,
+    _path_input,
+    _read_config,
+    _render_plugin_config,
+    _write_config_entry,
 )
+from pages.insights import render_insights_and_narrative
+from pages.music import render_timeline_analysis
+from pages.overview import render_top_charts
+from pages.places import render_spatial_analysis
+from visualize import main
+
+
+class TestPathInput(unittest.TestCase):
+    """Tests for the _path_input and _render_plugin_config sidebar helpers."""
+
+    def _make_st_mocks(
+        self, mock_columns: MagicMock, mock_button: MagicMock
+    ) -> tuple[MagicMock, MagicMock]:
+        """Return (col1, col2) column mocks with browse button not clicked."""
+        col1, col2 = MagicMock(), MagicMock()
+        mock_columns.return_value = [col1, col2]
+        mock_button.return_value = False
+        col2.button.return_value = False
+        return col1, col2
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    @patch("streamlit.session_state", {})
+    def test_path_input_uses_default_when_no_session_state(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        self._make_st_mocks(mock_columns, mock_button)
+        result = _path_input("My Label", "test_key", default="/some/default")
+        self.assertEqual(result, "/some/default")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    def test_path_input_returns_existing_session_state(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        self._make_st_mocks(mock_columns, mock_button)
+        with patch("streamlit.session_state", {"test_key2": "/existing/path"}):
+            result = _path_input("My Label", "test_key2", default="/default")
+        self.assertEqual(result, "/existing/path")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", False)
+    @patch("streamlit.text_input")
+    @patch("streamlit.session_state", {})
+    def test_path_input_fallback_without_tkinter(self, mock_text_input: MagicMock) -> None:
+        # Without tkinter, renders a plain st.text_input (no browse button).
+        _path_input("Label", "nontk_key", default="")
+        mock_text_input.assert_called_once()
+        call_kwargs = mock_text_input.call_args
+        self.assertEqual(call_kwargs[1]["key"], "nontk_key")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    @patch("streamlit.session_state", {})
+    def test_render_plugin_config_collects_all_fields(
+        self, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        col1, col2 = MagicMock(), MagicMock()
+        mock_columns.return_value = [col1, col2]
+        col2.button.return_value = False
+
+        fields = [
+            {"key": "data_path", "label": "CSV file", "type": "file_path"},
+        ]
+        result = _render_plugin_config("myplugin", fields)
+        self.assertIn("data_path", result)
+
+
+class TestConfigPersistence(unittest.TestCase):
+    """Tests for config file read/write and session state hydration."""
+
+    def setUp(self) -> None:
+        self.config_dir = "data_test_config"
+        self.config_path = os.path.join(self.config_dir, "config.json")
+        os.makedirs(self.config_dir, exist_ok=True)
+
+    def tearDown(self) -> None:
+        if os.path.exists(self.config_dir):
+            shutil.rmtree(self.config_dir)
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_read_config_returns_empty_dict_when_no_file(self, mock_path: MagicMock) -> None:
+        mock_path.__str__ = lambda _: self.config_path  # type: ignore[method-assign]
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            result = _read_config()
+        self.assertEqual(result, {})
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_write_and_read_config_round_trip(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("lastfm_data_path", "/some/file.csv")
+            result = _read_config()
+        self.assertEqual(result["lastfm_data_path"], "/some/file.csv")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_write_config_preserves_existing_entries(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("key_a", "/path/a")
+            _write_config_entry("key_b", "/path/b")
+            result = _read_config()
+        self.assertEqual(result["key_a"], "/path/a")
+        self.assertEqual(result["key_b"], "/path/b")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_hydrates_session_state(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("some_plugin_path", "/hydrated/path")
+            session: dict[str, object] = {}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            self.assertEqual(session.get("some_plugin_path"), "/hydrated/path")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_does_not_overwrite_existing_session_state(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("existing_key", "/from/disk")
+            session: dict[str, object] = {"existing_key": "/already/set"}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            self.assertEqual(session["existing_key"], "/already/set")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_runs_only_once_per_session(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("once_key", "/once")
+            session: dict[str, object] = {"_autobio_config_loaded": True}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            # Key should NOT be loaded because config was already marked loaded.
+            self.assertNotIn("once_key", session)
 
 
 class TestVisualize(unittest.TestCase):
-    def setUp(self):
+    """Tests for page render functions and the dashboard entrypoint."""
+
+    def setUp(self) -> None:
         self.test_dir = "data_test"
         os.makedirs(self.test_dir, exist_ok=True)
         self.test_csv = os.path.join(self.test_dir, "test_user_tracks.csv")
@@ -37,7 +175,7 @@ class TestVisualize(unittest.TestCase):
         self.df["date_text"] = pd.to_datetime(self.df["date_text"])
         self.df.to_csv(self.test_csv, index=False)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
@@ -49,17 +187,24 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.dataframe")
     @patch("streamlit.slider")
     def test_render_spatial_analysis(
-        self, mock_slider, mock_df, mock_deck, mock_cols, mock_date, mock_select, mock_header
-    ):
+        self,
+        mock_slider: MagicMock,
+        mock_df: MagicMock,
+        mock_deck: MagicMock,
+        mock_cols: MagicMock,
+        mock_date: MagicMock,
+        mock_select: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_select.return_value = "All"
         mock_date.return_value = [
             self.df["date_text"].min().date(),
             self.df["date_text"].max().date(),
         ]
         mock_cols.side_effect = [
-            [MagicMock(), MagicMock()],  # col_f1, col_f2
-            [MagicMock(), MagicMock(), MagicMock()],  # col_a, col_b, col_c
-            [MagicMock(), MagicMock()],  # fly_col1, fly_col2
+            [MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock()],
         ]
         mock_slider.return_value = 3.0
 
@@ -79,8 +224,13 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.columns")
     @patch("streamlit.plotly_chart")
     def test_render_top_charts(
-        self, mock_plotly, mock_columns, mock_slider, mock_radio, mock_header
-    ):
+        self,
+        mock_plotly: MagicMock,
+        mock_columns: MagicMock,
+        mock_slider: MagicMock,
+        mock_radio: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_radio.return_value = "artist"
         mock_slider.return_value = 10
         mock_columns.return_value = [MagicMock(), MagicMock()]
@@ -96,8 +246,12 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.plotly_chart")
     @patch("streamlit.subheader")
     def test_render_timeline_analysis(
-        self, mock_subheader, mock_plotly, mock_selectbox, mock_header
-    ):
+        self,
+        mock_subheader: MagicMock,
+        mock_plotly: MagicMock,
+        mock_selectbox: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_selectbox.return_value = "Daily"
 
         render_timeline_analysis(self.df)
@@ -116,22 +270,21 @@ class TestVisualize(unittest.TestCase):
     @patch("streamlit.metric")
     def test_render_insights_and_narrative(
         self,
-        mock_metric,
-        mock_tabs,
-        mock_df,
-        mock_plotly,
-        mock_cols,
-        mock_select,
-        mock_subheader,
-        mock_header,
-    ):
+        mock_metric: MagicMock,
+        mock_tabs: MagicMock,
+        mock_df: MagicMock,
+        mock_plotly: MagicMock,
+        mock_cols: MagicMock,
+        mock_select: MagicMock,
+        mock_subheader: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
         mock_select.return_value = "All"
-        # Provide lists for each st.columns call
         mock_cols.side_effect = [
-            [MagicMock()] * 4,  # col_filter1-4
-            [MagicMock()] * 2,  # col_top1-2
-            [MagicMock()] * 2,  # col_pat1-2
-            [MagicMock()] * 2,  # col_nar1-2
+            [MagicMock()] * 4,
+            [MagicMock()] * 2,
+            [MagicMock()] * 2,
+            [MagicMock()] * 2,
         ]
         mock_tabs.return_value = [MagicMock(), MagicMock(), MagicMock()]
 
@@ -141,71 +294,21 @@ class TestVisualize(unittest.TestCase):
         self.assertTrue(mock_select.called)
 
     @patch("streamlit.set_page_config")
-    @patch("streamlit.title")
-    @patch("streamlit.sidebar.selectbox")
-    @patch("visualize.load_listening_data")
-    @patch("streamlit.tabs")
-    @patch("streamlit.sidebar.header")
-    @patch("streamlit.sidebar.text_input")
-    @patch("streamlit.sidebar.date_input")
-    @patch("streamlit.sidebar.button")
-    @patch("streamlit.spinner")
-    def test_main_success(
+    @patch("streamlit.navigation")
+    def test_main_configures_page_and_runs_navigation(
         self,
-        mock_spinner,
-        mock_button,
-        mock_date_input,
-        mock_text_input,
-        mock_sidebar_header,
-        mock_tabs,
-        mock_load,
-        mock_selectbox,
-        mock_title,
-        mock_config,
-    ):
-        original_exists = os.path.exists
-        mock_date_input.return_value = [
-            self.df["date_text"].min().date(),
-            self.df["date_text"].max().date(),
-        ]
-        mock_button.return_value = False
+        mock_nav: MagicMock,
+        mock_config: MagicMock,
+    ) -> None:
+        mock_pg = MagicMock()
+        mock_nav.return_value = mock_pg
 
-        mock_spinner.return_value.__enter__.return_value = None
-        mock_spinner.return_value.__exit__.return_value = None
+        with patch("visualize.render_sidebar"):
+            main()
 
-        with (
-            patch("os.listdir") as mock_listdir,
-            patch("visualize.render_top_charts"),
-            patch("visualize.render_timeline_analysis"),
-            patch("visualize.render_spatial_analysis"),
-            patch("visualize.render_insights_and_narrative"),
-        ):
-            with patch("os.path.exists") as mock_exists:
-
-                def side_effect(path):
-                    if path == "data":
-                        return True
-                    if path == "default_assumptions.json.example":
-                        return True
-                    return original_exists(path)
-
-                mock_exists.side_effect = side_effect
-
-                mock_listdir.return_value = ["test_user_tracks.csv"]
-                mock_selectbox.return_value = "test_user_tracks.csv"
-                mock_text_input.side_effect = ["data", "", "default_assumptions.json.example"]
-                mock_load.return_value = self.df
-
-                # Updated to 4 tabs
-                tab1, tab2, tab3, tab4 = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-                mock_tabs.return_value = [tab1, tab2, tab3, tab4]
-
-                main()
-
-        mock_title.assert_called_with("Autobiographer: Interactive Data Explorer")
-        mock_load.assert_called_once()
-        self.assertEqual(len(mock_tabs.return_value), 4)
-        self.assertTrue(mock_date_input.called)
+        mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")
+        mock_nav.assert_called_once()
+        mock_pg.run.assert_called_once()
 
 
 if __name__ == "__main__":

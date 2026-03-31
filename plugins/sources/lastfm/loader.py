@@ -24,6 +24,7 @@ class LastFmPlugin(SourcePlugin):
     PLUGIN_TYPE = "what-when"
     PLUGIN_ID = "lastfm"
     DISPLAY_NAME = "Last.fm Music History"
+    ICON = ":material/headphones:"
 
     def get_config_fields(self) -> list[dict[str, Any]]:
         """Declare sidebar config fields for the Last.fm plugin.
@@ -35,7 +36,8 @@ class LastFmPlugin(SourcePlugin):
             {
                 "key": "data_path",
                 "label": "Last.fm CSV file",
-                "type": "path",
+                "type": "file_path",
+                "file_types": [("CSV files", "*.csv"), ("All files", "*.*")],
             }
         ]
 
@@ -61,8 +63,8 @@ class LastFmPlugin(SourcePlugin):
         data_path: str = config["data_path"]
         df = load_listening_data(data_path)
 
-        if df.empty:
-            return df
+        if df is None or df.empty:
+            return pd.DataFrame()
 
         # Add normalized schema columns alongside originals so downstream
         # views can use either naming convention.

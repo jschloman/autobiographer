@@ -22,6 +22,7 @@ class SwarmPlugin(SourcePlugin):
     PLUGIN_TYPE = "where-when"
     PLUGIN_ID = "swarm"
     DISPLAY_NAME = "Foursquare / Swarm Check-ins"
+    ICON = ":material/location_on:"
 
     def get_config_fields(self) -> list[dict[str, Any]]:
         """Declare sidebar config fields for the Swarm plugin.
@@ -33,12 +34,13 @@ class SwarmPlugin(SourcePlugin):
             {
                 "key": "swarm_dir",
                 "label": "Swarm JSON export directory",
-                "type": "path",
+                "type": "dir_path",
             },
             {
                 "key": "assumptions_file",
                 "label": "Location assumptions JSON (optional)",
-                "type": "path",
+                "type": "file_path",
+                "file_types": [("JSON files", "*.json"), ("All files", "*.*")],
             },
         ]
 

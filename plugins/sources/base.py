@@ -46,6 +46,7 @@ class SourcePlugin(ABC):
     PLUGIN_TYPE: str  # "what-when" or "where-when"
     PLUGIN_ID: str  # unique identifier, e.g. "lastfm", "swarm"
     DISPLAY_NAME: str  # human-readable name for the UI
+    ICON: str = ":material/database:"  # Material icon token shown in the sidebar
 
     @abstractmethod
     def get_config_fields(self) -> list[dict[str, Any]]:
@@ -54,7 +55,17 @@ class SourcePlugin(ABC):
         Each field dict must contain:
             key (str): Config dict key.
             label (str): Display label for the UI widget.
-            type (str): Widget type — "text", "path", or "toggle".
+            type (str): Widget type. Supported values:
+                "file_path" — opens a native file picker dialog.
+                "dir_path"  — opens a native directory picker dialog.
+                "text"      — plain text input (no file dialog).
+                "toggle"    — boolean checkbox.
+
+        Optional keys:
+            file_types (list[tuple[str, str]]): Pairs of (description, glob
+                pattern) passed to the file dialog, e.g.
+                ``[("CSV files", "*.csv"), ("All files", "*.*")]``.
+                Only used when type is "file_path".
 
         Returns:
             List of field descriptor dicts.

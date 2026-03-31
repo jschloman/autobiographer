@@ -97,6 +97,17 @@ class TestLastFmPlugin(unittest.TestCase):
         self.assertIsInstance(fields, list)
         self.assertTrue(any(f["key"] == "data_path" for f in fields))
 
+    def test_config_field_type_is_file_path(self):
+        fields = self.plugin.get_config_fields()
+        data_path_field = next(f for f in fields if f["key"] == "data_path")
+        self.assertEqual(data_path_field["type"], "file_path")
+
+    def test_config_field_has_file_types(self):
+        fields = self.plugin.get_config_fields()
+        data_path_field = next(f for f in fields if f["key"] == "data_path")
+        self.assertIn("file_types", data_path_field)
+        self.assertIsInstance(data_path_field["file_types"], list)
+
     def test_load_adds_normalized_columns(self):
         with patch("analysis_utils.load_listening_data") as mock_load:
             mock_load.return_value = self.fixture_df.copy()
@@ -160,6 +171,17 @@ class TestSwarmPlugin(unittest.TestCase):
         fields = self.plugin.get_config_fields()
         self.assertIsInstance(fields, list)
         self.assertTrue(any(f["key"] == "swarm_dir" for f in fields))
+
+    def test_swarm_dir_field_type_is_dir_path(self):
+        fields = self.plugin.get_config_fields()
+        swarm_dir_field = next(f for f in fields if f["key"] == "swarm_dir")
+        self.assertEqual(swarm_dir_field["type"], "dir_path")
+
+    def test_assumptions_field_type_is_file_path(self):
+        fields = self.plugin.get_config_fields()
+        assumptions_field = next(f for f in fields if f["key"] == "assumptions_file")
+        self.assertEqual(assumptions_field["type"], "file_path")
+        self.assertIn("file_types", assumptions_field)
 
     def test_load_adds_normalized_columns(self):
         with patch("analysis_utils.load_swarm_data") as mock_load:
