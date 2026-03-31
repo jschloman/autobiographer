@@ -7,6 +7,7 @@ import streamlit as st
 from pandas import DataFrame
 
 from analysis_utils import get_top_entities
+from components.theme import apply_dark_theme
 
 
 def render_top_charts(df: DataFrame) -> None:
@@ -29,11 +30,13 @@ def render_top_charts(df: DataFrame) -> None:
             title=f"Top {limit} {entity_type.capitalize()}s",
         )
         fig_bar.update_layout(yaxis={"categoryorder": "total ascending"})
+        apply_dark_theme(fig_bar)
         st.plotly_chart(fig_bar, width="stretch")
     with col2:
         fig_pie = px.pie(
             top_data.head(10), values="Plays", names=entity_type, title="Market Share (Top 10)"
         )
+        apply_dark_theme(fig_pie)
         st.plotly_chart(fig_pie, width="stretch")
 
 

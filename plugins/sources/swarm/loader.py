@@ -33,12 +33,13 @@ class SwarmPlugin(SourcePlugin):
             {
                 "key": "swarm_dir",
                 "label": "Swarm JSON export directory",
-                "type": "path",
+                "type": "dir_path",
             },
             {
                 "key": "assumptions_file",
                 "label": "Location assumptions JSON (optional)",
-                "type": "path",
+                "type": "file_path",
+                "file_types": [("JSON files", "*.json"), ("All files", "*.*")],
             },
         ]
 

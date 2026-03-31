@@ -7,6 +7,7 @@ import streamlit as st
 from pandas import DataFrame
 
 from analysis_utils import get_cumulative_plays, get_listening_intensity
+from components.theme import apply_dark_theme
 
 
 def render_timeline_analysis(df: DataFrame) -> None:
@@ -20,10 +21,12 @@ def render_timeline_analysis(df: DataFrame) -> None:
     freq_label = st.selectbox("Select grouping frequency", list(freq_map.keys()))
     intensity = get_listening_intensity(df, freq_map[freq_label])
     fig_intensity = px.line(intensity, x="date", y="Plays", title=f"Plays per {freq_label}")
+    apply_dark_theme(fig_intensity)
     st.plotly_chart(fig_intensity, width="stretch")
     st.subheader("Cumulative Growth")
     cumulative = get_cumulative_plays(df)
     fig_cumulative = px.area(cumulative, x="date", y="CumulativePlays", title="Total Plays Growth")
+    apply_dark_theme(fig_cumulative)
     st.plotly_chart(fig_cumulative, width="stretch")
 
 

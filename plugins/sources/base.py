@@ -54,7 +54,17 @@ class SourcePlugin(ABC):
         Each field dict must contain:
             key (str): Config dict key.
             label (str): Display label for the UI widget.
-            type (str): Widget type — "text", "path", or "toggle".
+            type (str): Widget type. Supported values:
+                "file_path" — opens a native file picker dialog.
+                "dir_path"  — opens a native directory picker dialog.
+                "text"      — plain text input (no file dialog).
+                "toggle"    — boolean checkbox.
+
+        Optional keys:
+            file_types (list[tuple[str, str]]): Pairs of (description, glob
+                pattern) passed to the file dialog, e.g.
+                ``[("CSV files", "*.csv"), ("All files", "*.*")]``.
+                Only used when type is "file_path".
 
         Returns:
             List of field descriptor dicts.

@@ -9,11 +9,133 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
 
+from components.sidebar import (
+    _load_config_into_session_state,
+    _path_input,
+    _read_config,
+    _render_plugin_config,
+    _write_config_entry,
+)
 from pages.insights import render_insights_and_narrative
 from pages.music import render_timeline_analysis
 from pages.overview import render_top_charts
 from pages.places import render_spatial_analysis
 from visualize import main
+
+
+class TestPathInput(unittest.TestCase):
+    """Tests for the _path_input and _render_plugin_config sidebar helpers."""
+
+    def _make_sidebar_mocks(self, mock_sidebar: MagicMock) -> tuple[MagicMock, MagicMock]:
+        """Return (col1, col2) mocks for sidebar.columns() calls."""
+        col1, col2 = MagicMock(), MagicMock()
+        mock_sidebar.columns.return_value = [col1, col2]
+        col2.button.return_value = False  # browse button not clicked
+        return col1, col2
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.sidebar")
+    @patch("streamlit.session_state", {})
+    def test_path_input_uses_default_when_no_session_state(self, mock_sidebar: MagicMock) -> None:
+        self._make_sidebar_mocks(mock_sidebar)
+        result = _path_input("My Label", "test_key", default="/some/default")
+        self.assertEqual(result, "/some/default")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.sidebar")
+    def test_path_input_returns_existing_session_state(self, mock_sidebar: MagicMock) -> None:
+        self._make_sidebar_mocks(mock_sidebar)
+        with patch("streamlit.session_state", {"test_key2": "/existing/path"}):
+            result = _path_input("My Label", "test_key2", default="/default")
+        self.assertEqual(result, "/existing/path")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", False)
+    @patch("streamlit.sidebar")
+    @patch("streamlit.session_state", {})
+    def test_path_input_fallback_without_tkinter(self, mock_sidebar: MagicMock) -> None:
+        # Without tkinter, renders a plain text_input and no browse button.
+        _path_input("Label", "nontk_key", default="")
+        mock_sidebar.text_input.assert_called_once()
+        call_kwargs = mock_sidebar.text_input.call_args
+        self.assertEqual(call_kwargs[1]["key"], "nontk_key")
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.sidebar")
+    @patch("streamlit.session_state", {})
+    def test_render_plugin_config_collects_all_fields(self, mock_sidebar: MagicMock) -> None:
+        col1, col2 = MagicMock(), MagicMock()
+        mock_sidebar.columns.return_value = [col1, col2]
+        col2.button.return_value = False
+
+        fields = [
+            {"key": "data_path", "label": "CSV file", "type": "file_path"},
+        ]
+        result = _render_plugin_config("myplugin", fields)
+        self.assertIn("data_path", result)
+
+
+class TestConfigPersistence(unittest.TestCase):
+    """Tests for config file read/write and session state hydration."""
+
+    def setUp(self) -> None:
+        self.config_dir = "data_test_config"
+        self.config_path = os.path.join(self.config_dir, "config.json")
+        os.makedirs(self.config_dir, exist_ok=True)
+
+    def tearDown(self) -> None:
+        if os.path.exists(self.config_dir):
+            shutil.rmtree(self.config_dir)
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_read_config_returns_empty_dict_when_no_file(self, mock_path: MagicMock) -> None:
+        mock_path.__str__ = lambda _: self.config_path  # type: ignore[method-assign]
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            result = _read_config()
+        self.assertEqual(result, {})
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_write_and_read_config_round_trip(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("lastfm_data_path", "/some/file.csv")
+            result = _read_config()
+        self.assertEqual(result["lastfm_data_path"], "/some/file.csv")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_write_config_preserves_existing_entries(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("key_a", "/path/a")
+            _write_config_entry("key_b", "/path/b")
+            result = _read_config()
+        self.assertEqual(result["key_a"], "/path/a")
+        self.assertEqual(result["key_b"], "/path/b")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_hydrates_session_state(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("some_plugin_path", "/hydrated/path")
+            session: dict[str, object] = {}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            self.assertEqual(session.get("some_plugin_path"), "/hydrated/path")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_does_not_overwrite_existing_session_state(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("existing_key", "/from/disk")
+            session: dict[str, object] = {"existing_key": "/already/set"}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            self.assertEqual(session["existing_key"], "/already/set")
+
+    @patch("components.sidebar._CONFIG_PATH")
+    def test_load_config_runs_only_once_per_session(self, _: MagicMock) -> None:
+        with patch("components.sidebar._CONFIG_PATH", self.config_path):
+            _write_config_entry("once_key", "/once")
+            session: dict[str, object] = {"_autobio_config_loaded": True}
+            with patch("streamlit.session_state", session):
+                _load_config_into_session_state()
+            # Key should NOT be loaded because config was already marked loaded.
+            self.assertNotIn("once_key", session)
 
 
 class TestVisualize(unittest.TestCase):

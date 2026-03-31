@@ -35,7 +35,8 @@ class LastFmPlugin(SourcePlugin):
             {
                 "key": "data_path",
                 "label": "Last.fm CSV file",
-                "type": "path",
+                "type": "file_path",
+                "file_types": [("CSV files", "*.csv"), ("All files", "*.*")],
             }
         ]
 

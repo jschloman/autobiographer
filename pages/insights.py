@@ -14,6 +14,7 @@ from analysis_utils import (
     get_top_entities,
     get_unique_entities,
 )
+from components.theme import SEQUENTIAL_SCALE, apply_dark_theme
 
 
 def render_insights_and_narrative(df: DataFrame) -> None:
@@ -98,6 +99,7 @@ def render_insights_and_narrative(df: DataFrame) -> None:
         with col_pat1:
             hourly = get_hourly_distribution(filtered_df)
             fig_hourly = px.bar(hourly, x="hour", y="Plays", title="Listening by Hour of Day")
+            apply_dark_theme(fig_hourly)
             st.plotly_chart(fig_hourly, width="stretch")
         with col_pat2:
             df_copy = filtered_df.copy()
@@ -126,7 +128,9 @@ def render_insights_and_narrative(df: DataFrame) -> None:
                 labels=dict(x="Hour of Day", y="Day of Week", color="Plays"),
                 title="Listening Intensity (Day vs Hour)",
                 aspect="auto",
+                color_continuous_scale=SEQUENTIAL_SCALE,
             )
+            apply_dark_theme(fig_heatmap)
             st.plotly_chart(fig_heatmap, width="stretch")
 
     st.markdown("---")

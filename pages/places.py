@@ -12,6 +12,14 @@ import pydeck as pdk
 import streamlit as st
 from pandas import DataFrame
 
+from components.theme import (
+    MAP_COLUMN_DEFAULT_RGBA,
+    MAP_COUNTRY_BORDER_RGB,
+    MAP_COUNTRY_UNVISITED_RGBA,
+    MAP_COUNTRY_VISITED_RGBA,
+    MAP_STATE_BORDER_RGBA,
+)
+
 
 def render_spatial_analysis(df: DataFrame) -> None:
     """Render 3D geographical visualization of listening history.
@@ -180,7 +188,7 @@ def render_spatial_analysis(df: DataFrame) -> None:
                     longitude=export_keyframes[0]["longitude"],
                     zoom=export_keyframes[0]["zoom"],
                 ),
-                map_style="light",
+                map_style="dark",
             )
 
             html_content = export_deck.to_html(as_string=True)
@@ -236,19 +244,27 @@ def render_spatial_analysis(df: DataFrame) -> None:
         st.success("Fly-through complete!")
 
     def get_spectrum_color(val: float, max_val: float) -> list[int]:
-        """Return an RGBA color interpolated across a blue-purple spectrum."""
+        """Return an RGBA color interpolated from teal to amber for dark basemaps.
+
+        Low-play locations render as deep teal; high-play locations render as
+        warm amber, both of which read clearly against the dark map background.
+        """
         if max_val == 0:
-            return [236, 226, 240, 200]
+            return MAP_COLUMN_DEFAULT_RGBA
         ratio = val / max_val
         if ratio < 0.5:
-            r = 236 + (166 - 236) * (ratio * 2)
-            g = 226 + (189 - 226) * (ratio * 2)
-            b = 240 + (219 - 240) * (ratio * 2)
+            # Deep teal [0, 200, 200] → cyan-green [100, 220, 120]
+            t = ratio * 2
+            r = int(0 + 100 * t)
+            g = int(200 + 20 * t)
+            b = int(200 - 80 * t)
         else:
-            r = 166 + (28 - 166) * ((ratio - 0.5) * 2)
-            g = 189 + (144 - 189) * ((ratio - 0.5) * 2)
-            b = 219 + (153 - 219) * ((ratio - 0.5) * 2)
-        return [int(r), int(g), int(b), 220]
+            # Cyan-green [100, 220, 120] → warm amber [255, 160, 20]
+            t = (ratio - 0.5) * 2
+            r = int(100 + 155 * t)
+            g = int(220 - 60 * t)
+            b = int(120 - 100 * t)
+        return [r, g, b, 220]
 
     dynamic_radius = 50000 / (2 ** (zoom_level - 1))
 
@@ -275,8 +291,8 @@ def render_spatial_analysis(df: DataFrame) -> None:
 
         def country_color_logic(country_idx: int) -> list[int]:
             if country_idx in countries_with_points.index:
-                return [166, 189, 219, 130]
-            return [240, 240, 240, 30]
+                return MAP_COUNTRY_VISITED_RGBA
+            return MAP_COUNTRY_UNVISITED_RGBA
 
         world["fill_color"] = world.index.map(country_color_logic)
         return world, states_path if os.path.exists(states_path) else None
@@ -292,7 +308,7 @@ def render_spatial_analysis(df: DataFrame) -> None:
                 stroked=True,
                 filled=True,
                 get_fill_color="fill_color",
-                get_line_color=[100, 100, 100],
+                get_line_color=MAP_COUNTRY_BORDER_RGB,
                 get_line_width=1,
             )
         )
@@ -303,7 +319,7 @@ def render_spatial_analysis(df: DataFrame) -> None:
                 states_geojson_path,
                 stroked=True,
                 filled=False,
-                get_line_color=[150, 150, 150, 100],
+                get_line_color=MAP_STATE_BORDER_RGBA,
                 get_line_width=1,
             )
         )
@@ -336,7 +352,7 @@ def render_spatial_analysis(df: DataFrame) -> None:
         layers=layers,
         initial_view_state=st.session_state.spatial_view_state,
         tooltip={"text": "{city}: {Plays} plays"},
-        map_style="light",
+        map_style="dark",
     )
     st.pydeck_chart(r, key="spatial_map")
 
