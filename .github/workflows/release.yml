@@ -1,34 +1,41 @@
 name: Release
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [closed]
 
 jobs:
   release:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     concurrency: release
     permissions:
       contents: write
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.9"
+      - name: Generate timestamp tag
+        id: version
+        run: |
+          BASE="v$(date -u +%Y.%m.%d)"
+          TAG="$BASE"
+          N=1
+          while git ls-remote --tags origin "$TAG" | grep -q "$TAG"; do
+            TAG="${BASE}.${N}"
+            N=$((N + 1))
+          done
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Install python-semantic-release
-        run: pip install python-semantic-release
-
-      - name: Run semantic release
+      - name: Create tag and GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          semantic-release version
-          semantic-release publish
+          TAG="${{ steps.version.outputs.tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --generate-notes
