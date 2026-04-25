@@ -2,7 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/*]
+    branches:
+      - main
+      - "feat/*"
+      - "fix/*"
+      - "docs/*"
+      - "refactor/*"
+      - "chore/*"
+      - "ci/*"
+      - "test/*"
+      - "perf/*"
+      - "style/*"
+      - "build/*"
   pull_request:
     branches: [main]
 
@@ -31,21 +42,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy types-requests -r requirements.txt
+          pip install -e ".[dev]"
 
-      - name: Lint and format check
-        run: |
-          ruff check .
-          ruff format --check .
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
 
       - name: Type check
         run: mypy
 
       - name: Tests and coverage
-        run: |
-          export PYTHONPATH=$PYTHONPATH:.
-          pytest --cov=. --cov-report=term-missing --cov-fail-under=80 tests/
+        run: pytest
+        env:
+          PYTHONPATH: "."

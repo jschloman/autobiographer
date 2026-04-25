@@ -3,6 +3,33 @@ name = "autobiographer"
 version = "0.1.0"
 description = "A personal data platform for reconstructing the narrative arc of your life from digital traces."
 requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "plotly>=5.20",
+    "streamlit>=1.35",
+    "nbformat>=5.9",
+    "ipykernel>=6.29",
+    "pydeck>=0.9",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "moviepy>=1.0",
+    "playwright>=1.44",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "responses>=0.25",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "types-requests",
+]
 
 
 [tool.ruff]
@@ -44,3 +71,29 @@ follow_imports = "skip"
 [tool.bandit]
 exclude_dirs = ["venv", "tests"]
 skips = ["B101"]  # assert statements
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--tb=short",
+    "--cov=.",
+    "--cov-report=term-missing",
+    "--cov-fail-under=70",  # source-only threshold (tests/ excluded from measurement)
+]
+
+[tool.coverage.run]
+omit = [
+    "venv/*",
+    ".venv/*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
