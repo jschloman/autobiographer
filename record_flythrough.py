@@ -14,6 +14,8 @@ import pydeck as pdk
 from moviepy import ImageSequenceClip
 from playwright.async_api import async_playwright
 
+from components.theme import MAP_COLUMN_DEFAULT_RGBA
+
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate the great circle distance between two points in kilometers."""
@@ -242,20 +244,19 @@ def create_recording_assets(
     )
 
     def get_color(val: float, max_val: float) -> list[int]:
-        ratio = val / max_val if max_val > 0 else 0
+        """Interpolate teal → amber to match the application's dark-map palette."""
+        if max_val == 0:
+            return MAP_COLUMN_DEFAULT_RGBA
+        ratio = val / max_val
         if ratio < 0.5:
-            r, g, b = (
-                236 + (166 - 236) * (ratio * 2),
-                226 + (189 - 226) * (ratio * 2),
-                240 + (219 - 240) * (ratio * 2),
-            )
+            # Deep teal [0, 200, 200] → cyan-green [100, 220, 120]
+            t = ratio * 2
+            r, g, b = int(100 * t), int(200 + 20 * t), int(200 - 80 * t)
         else:
-            r, g, b = (
-                166 + (28 - 166) * ((ratio - 0.5) * 2),
-                189 + (144 - 189) * ((ratio - 0.5) * 2),
-                219 + (153 - 219) * ((ratio - 0.5) * 2),
-            )
-        return [int(r), int(g), int(b), 200]
+            # Cyan-green [100, 220, 120] → warm amber [255, 160, 20]
+            t = (ratio - 0.5) * 2
+            r, g, b = int(100 + 155 * t), int(220 - 60 * t), int(120 - 100 * t)
+        return [r, g, b, 220]
 
     geo_data["color"] = geo_data["elevation_log"].apply(lambda x: get_color(x, max_log))
 
@@ -328,24 +329,51 @@ def create_recording_assets(
     if "timestamp" in vs_init:
         del vs_init["timestamp"]
 
-    deck = pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**vs_init), map_style="light")
+    deck = pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**vs_init), map_style="dark")
     return deck, keyframes
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a cinematic fly-through video.")
-    parser.add_argument("csv", nargs="?", help="Path to track CSV")
-    parser.add_argument("--output", default="flythrough.mp4", help="Output file")
-    parser.add_argument("--artist", help="Filter by artist name")
-    parser.add_argument("--start_date", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end_date", help="End date (YYYY-MM-DD)")
-    parser.add_argument("--marker_zoom", type=float, default=3.0, help="Marker scaling zoom level")
-    parser.add_argument("--fps", type=int, default=30, help="Frames per second")
-    parser.add_argument("--width", type=int, default=1920, help="Video width")
-    parser.add_argument("--height", type=int, default=1080, help="Video height")
-    parser.add_argument("--assumptions", help="Path to location assumptions JSON")
-    parser.add_argument("--swarm_dir", help="Path to Swarm data directory")
-    parser.add_argument("--keep_frames", action="store_true", help="Keep temp frames")
+    parser.add_argument(
+        "csv",
+        nargs="?",
+        help="Path to Last.fm tracks CSV (required; script exits silently if omitted and no *_tracks.csv exists in the data/ directory)",
+    )
+    parser.add_argument(
+        "--output",
+        default="flythrough.mp4",
+        help="Output path; use .mp4 for video or .html for an interactive animation (default: flythrough.mp4)",
+    )
+    parser.add_argument("--artist", help="Filter to a single artist name")
+    parser.add_argument("--start_date", help="Inclusive start date filter (YYYY-MM-DD)")
+    parser.add_argument("--end_date", help="Inclusive end date filter (YYYY-MM-DD)")
+    parser.add_argument(
+        "--marker_zoom",
+        type=float,
+        default=3.0,
+        help="Marker size scaling: higher values produce smaller, more precise markers (default: 3.0)",
+    )
+    parser.add_argument("--fps", type=int, default=30, help="Video frame rate (default: 30)")
+    parser.add_argument(
+        "--width", type=int, default=1920, help="Video width in pixels (default: 1920)"
+    )
+    parser.add_argument(
+        "--height", type=int, default=1080, help="Video height in pixels (default: 1080)"
+    )
+    parser.add_argument(
+        "--assumptions",
+        help="Path to location assumptions JSON (default: default_assumptions.json or AUTOBIO_ASSUMPTIONS_FILE env var)",
+    )
+    parser.add_argument(
+        "--swarm_dir",
+        help="Path to Foursquare/Swarm export directory; used to geocode listening data when lat/lng is absent",
+    )
+    parser.add_argument(
+        "--keep_frames",
+        action="store_true",
+        help="Retain the temporary per-frame PNG files after encoding",
+    )
 
     args = parser.parse_args()
     result = create_recording_assets(

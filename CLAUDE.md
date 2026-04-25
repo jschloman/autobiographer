@@ -60,10 +60,10 @@ ruff check .
 ruff format --check .
 
 # Type checking
-mypy .
+mypy
 
-# Tests with coverage (must stay above 80%)
-pytest --cov=. --cov-report=term-missing --cov-fail-under=80 tests/
+# Tests with coverage (threshold and flags are set in pyproject.toml)
+pytest
 ```
 
 All four commands must exit with code 0. If any fail, fix the reported errors and re-run the full gate from Step 1 before pushing.

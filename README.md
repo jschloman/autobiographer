@@ -1,8 +1,15 @@
 # Autobiographer: Interactive Autobiographical Data Explorer
 
-![Example Output](assets/example%20screenshot.png)
+[![CI](https://github.com/jschloman/autobiographer/actions/workflows/ci.yml/badge.svg)](https://github.com/jschloman/autobiographer/actions/workflows/ci.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+<img src="assets/example%20screenshot%20map.png" style="width: 500">
 
 Autobiographer is a Python-based toolkit that allows you to fetch, store, and explore your personal music listening history (Last.fm) and location history (Foursquare/Swarm). It transforms your data into an interactive autobiographical experience, highlighting your top artists, listening patterns, milestones, and travel history.
+
+
+<img src="assets/example%20screenshot%20stats.png" style="width: 500">
 
 ## Features
 
@@ -15,11 +22,13 @@ Autobiographer is a Python-based toolkit that allows you to fetch, store, and ex
 - **Data Exploration**: Includes a Jupyter Notebook for custom data deep-dives.
 - **Secure Handling**: Credentials managed via environment variables.
 
+<img src="assets/flythrough.gif" style="width: 500">
+
 ## Getting Started
 
 ### 1. Prerequisites
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - A Last.fm API Key and Secret ([Obtain them here](https://www.last.fm/api/account/create))
 
 ### 2. Installation
@@ -90,31 +99,37 @@ To maintain privacy when sharing the codebase, identifying data like home reside
 - **Usage**: The app automatically looks for `default_assumptions.json` in the root, or you can specify a custom path via the `AUTOBIO_ASSUMPTIONS_FILE` environment variable.
 
 #### Fly-through Recording
-Generate a cinematic 3D fly-through video or HTML animation of your top listening locations.
+Generate a cinematic 3D fly-through video or HTML animation of your listening locations.
 
-  ![Fly-through Animation](assets/flythrough.gif)
 - **Script**: `record_flythrough.py`
-- **Features**: 
+- **Features**:
     - Smooth frame-by-frame interpolation using custom easing.
     - High-quality MP4 export using Playwright and MoviePy.
     - Automatically geocodes data if missing (using Swarm/Assumptions).
     - Configurable resolution, FPS, and filtering (artist, dates).
 - **Video Generation (.mp4)**:
    ```bash
-   python record_flythrough.py --output my_tour.mp4 --artist "Radiohead" --marker_width 2.0 --fps 30
+   python record_flythrough.py path/to/lastfm_tracks.csv --output my_tour.mp4 --artist "Radiohead" --marker_zoom 7 --fps 30
    ```
 - **HTML Animation**:
    ```bash
-   python record_flythrough.py --output tour.html --start_date 2023-01-01 --end_date 2023-12-31
+   python record_flythrough.py path/to/lastfm_tracks.csv --output tour.html --start_date 2023-01-01 --end_date 2023-12-31
    ```
 
-
 **Available Arguments:**
-- `--artist`: Filter by artist name.
-- `--start_date` / `--end_date`: Filter by timeframe (YYYY-MM-DD).
-- `--marker_width`: Scale the width/height of map markers (0.5 to 10.0).
-- `--output`: Saves as `.mp4` (video) or `.html` (interactive animation).
-- `--fps`: Set video frame rate (default: 30).
+
+| Argument | Description | Default |
+|---|---|---|
+| `csv` | Path to Last.fm tracks CSV (**required**) | — |
+| `--output` | Output path; `.mp4` for video, `.html` for interactive animation | `flythrough.mp4` |
+| `--artist` | Filter to a single artist name | — |
+| `--start_date` / `--end_date` | Inclusive date range filter (`YYYY-MM-DD`) | — |
+| `--marker_zoom` | Marker size scaling — higher values produce smaller, more precise markers | `3.0` |
+| `--fps` | Video frame rate | `30` |
+| `--width` / `--height` | Video resolution in pixels | `1920` / `1080` |
+| `--swarm_dir` | Path to Foursquare/Swarm export directory; used to geocode listening data when lat/lng is absent | — |
+| `--assumptions` | Path to location assumptions JSON | `default_assumptions.json` |
+| `--keep_frames` | Retain temporary per-frame PNG files after encoding | `false` |
 
 *Note: Video generation requires `playwright` and `ffmpeg` (installed automatically during setup).*
 
@@ -339,7 +354,7 @@ broker.is_type_available("where-when")  # → True
 Contributions are welcome! Please follow the engineering standards in `CLAUDE.md`:
 1. Create a descriptive feature branch using [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `perf:`, etc.).
 2. Implement your changes with test coverage (80% minimum).
-3. Run the local quality gate before pushing: `ruff check . && ruff format --check . && mypy && pytest --cov=. --cov-fail-under=80 tests/`
+3. Run the local quality gate before pushing: `ruff check . && ruff format --check . && mypy && pytest`
 4. Submit a Pull Request — the PR title must also follow Conventional Commits format.
 
 ## License
