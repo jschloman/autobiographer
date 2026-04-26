@@ -57,7 +57,7 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.9"
-files = ["autobiographer.py", "analysis_utils.py", "visualize.py", "record_flythrough.py", "find_checkin.py", "tools"]
+files = ["autobiographer.py", "analysis_utils.py", "visualize.py", "record_flythrough.py", "find_checkin.py", "tools", "core"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_return_any = true
