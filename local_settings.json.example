@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy this file to local_settings.json (gitignored) and fill in your absolute paths.",
+  "plugins": {
+    "lastfm": {
+      "data_path": "/absolute/path/to/your/lastfm-tracks.csv"
+    },
+    "swarm": {
+      "swarm_dir": "/absolute/path/to/your/swarm-export/",
+      "assumptions_file": "/absolute/path/to/your/default_assumptions.json"
+    }
+  }
+}

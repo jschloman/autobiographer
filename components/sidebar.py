@@ -4,15 +4,15 @@ Iterates over the registered source plugins, renders a file-path selector for
 each declared config field, then loads the active DataFrame into
 ``st.session_state["df"]`` so every page can access it without reloading.
 
-Path selections are persisted to ``data/config.json`` so they survive
-application restarts and do not need to be re-entered each session.
+Path selections are persisted to ``local_settings.json`` (gitignored) via
+:class:`~core.local_settings.LocalSettings` so they survive application
+restarts and do not need to be re-entered each session.
 """
 
 from __future__ import annotations
 
-import json
 import os
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
@@ -26,6 +26,7 @@ from analysis_utils import (
     load_swarm_data,
     save_to_cache,
 )
+from core.local_settings import LocalSettings
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 # Detect tkinter availability at import time so the browse button is only
@@ -37,50 +38,14 @@ try:
 except Exception:
     _TKINTER_AVAILABLE = False
 
-_CONFIG_PATH = os.path.join("data", "config.json")
-# Session state key used to track whether we have already loaded the config
-# file into session state in this session.
 _CONFIG_LOADED_KEY = "_autobio_config_loaded"
 
-
-def _read_config() -> dict[str, str]:
-    """Read persisted path config from disk.
-
-    Returns:
-        Dict of session_key → path strings, or an empty dict if the file does
-        not exist or cannot be parsed.
-    """
-    if not os.path.exists(_CONFIG_PATH):
-        return {}
-    try:
-        with open(_CONFIG_PATH) as f:
-            result: dict[str, str] = json.load(f)
-            return result
-    except Exception:
-        return {}
-
-
-def _write_config_entry(session_key: str, value: str) -> None:
-    """Persist a single path entry to the config file on disk.
-
-    Reads the current file (if any), updates the entry, then writes it back
-    atomically to avoid partial-write corruption.
-
-    Args:
-        session_key: The session state key (used as the config file key).
-        value: The path value to persist.
-    """
-    config = _read_config()
-    config[session_key] = value
-    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-    tmp_path = _CONFIG_PATH + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(config, f, indent=2)
-    os.replace(tmp_path, _CONFIG_PATH)
+# Module-level singleton — reads local_settings.json once on first import.
+_settings = LocalSettings()
 
 
 def _load_config_into_session_state() -> None:
-    """Hydrate session state from the persisted config file (once per session).
+    """Hydrate session state from local_settings.json (once per browser session).
 
     Only runs on the first script execution in a new browser session. Existing
     session state keys are not overwritten so that in-session changes take
@@ -88,15 +53,18 @@ def _load_config_into_session_state() -> None:
     """
     if st.session_state.get(_CONFIG_LOADED_KEY):
         return
-    for key, value in _read_config().items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    for plugin_id, plugin_cfg in _settings.get_all_plugin_configs().items():
+        for field_key, value in plugin_cfg.items():
+            session_key = f"{plugin_id}_{field_key}"
+            if session_key not in st.session_state:
+                st.session_state[session_key] = value
     st.session_state[_CONFIG_LOADED_KEY] = True
 
 
 def _path_input(
     label: str,
     session_key: str,
+    on_persist: Callable[[str], None],
     default: str = "",
     file_types: list[tuple[str, str]] | None = None,
     is_dir: bool = False,
@@ -113,12 +81,14 @@ def _path_input(
     and triggers a rerun. At the top of the *next* run this value is transferred
     to the widget key before the widget is instantiated, which is always allowed.
 
-    Any path selected via the dialog or typed into the text input is persisted
-    to ``data/config.json`` so it survives application restarts.
+    Any path selected via the dialog or typed into the text input is passed to
+    ``on_persist`` so it can be saved to ``local_settings.json``.
 
     Args:
         label: Display label for the text input.
         session_key: Session state key used to persist the path value.
+        on_persist: Callback invoked with the new path string whenever the value
+            changes; responsible for writing to ``local_settings.json``.
         default: Default path value when neither session state nor the saved
             config has an entry for this key.
         file_types: List of (description, glob pattern) tuples for the file
@@ -136,13 +106,12 @@ def _path_input(
     if pending_key in st.session_state:
         value = str(st.session_state.pop(pending_key))
         st.session_state[session_key] = value
-        _write_config_entry(session_key, value)
+        on_persist(value)
     elif session_key not in st.session_state:
         st.session_state[session_key] = default
 
     def _on_change() -> None:
-        """Persist the updated text-input value to the config file."""
-        _write_config_entry(session_key, str(st.session_state.get(session_key, "")))
+        on_persist(str(st.session_state.get(session_key, "")))
 
     if _TKINTER_AVAILABLE:
         # Use st.columns / st.text_input (not st.sidebar.*) so widgets render
@@ -212,9 +181,18 @@ def _render_plugin_config(plugin_id: str, fields: list[dict[str, Any]]) -> dict[
         env_key = f"AUTOBIO_{plugin_id.upper()}_{field['key'].upper()}"
         default = os.getenv(env_key, "")
         is_dir = field.get("type") == "dir_path"
+        field_key = field["key"]
+
+        def _make_persist(fk: str = field_key) -> Callable[[str], None]:
+            def _persist(path: str) -> None:
+                _settings.set_plugin_value(plugin_id, fk, path)
+
+            return _persist
+
         value = _path_input(
             label=field["label"],
             session_key=f"{plugin_id}_{field['key']}",
+            on_persist=_make_persist(),
             default=default,
             file_types=field.get("file_types"),
             is_dir=is_dir,
