@@ -76,6 +76,8 @@ streamlit run visualize.py
 #### Export a Static HTML Report
 Generate a fully self-contained HTML report that can be opened in any browser without a server or network connection.  All JavaScript is inlined — no external CDN calls are made during rendering.
 
+<img src="assets/example%20web.png" style="width: 500">
+
 ```bash
 # Listening data only
 python export_html.py data/tracks.csv
