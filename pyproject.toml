@@ -52,12 +52,13 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S", "B"]
+"tests/*" = ["S", "B", "E501"]
 "record_flythrough.py" = ["E501"]  # long lines are embedded JS inside f-strings
+"export_html.py" = ["E501"]  # long lines are embedded JS/CSS inside f-strings
 
 [tool.mypy]
 python_version = "3.9"
-files = ["autobiographer.py", "analysis_utils.py", "visualize.py", "record_flythrough.py", "find_checkin.py", "tools", "core"]
+files = ["autobiographer.py", "analysis_utils.py", "visualize.py", "record_flythrough.py", "find_checkin.py", "export_html.py", "tools", "core"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_return_any = true
