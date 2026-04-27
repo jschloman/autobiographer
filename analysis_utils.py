@@ -575,8 +575,10 @@ def get_listening_intensity(df: pd.DataFrame, freq: str = "D") -> pd.DataFrame:
     """Calculate play counts per specified frequency ('D' for day, 'W' for week, 'ME' for month)."""
     if "date_text" not in df.columns or df.empty:
         return pd.DataFrame()
+    # pandas Period uses 'M' for month-end; resample uses the newer 'ME' alias.
+    period_freq = "M" if freq == "ME" else freq
     df_copy = df.copy()
-    df_copy["date_group"] = df_copy["date_text"].dt.to_period(freq).dt.to_timestamp()
+    df_copy["date_group"] = df_copy["date_text"].dt.to_period(period_freq).dt.to_timestamp()
     intensity = df_copy.groupby("date_group").size().reset_index(name="Plays")
     intensity.rename(columns={"date_group": "date"}, inplace=True)
     return intensity

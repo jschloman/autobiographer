@@ -67,11 +67,41 @@ Download your listening history to a local CSV file:
 python autobiographer.py --user your_username
 ```
 
-#### Launch the Dashboard
+#### Launch the Streamlit Dashboard
 Start the interactive Streamlit application:
 ```bash
 streamlit run visualize.py
 ```
+
+#### Export a Static HTML Report
+Generate a fully self-contained HTML report that can be opened in any browser without a server or network connection.  All JavaScript is inlined — no external CDN calls are made during rendering.
+
+<img src="assets/example%20web.png" style="width: 500">
+
+```bash
+# Listening data only
+python export_html.py data/tracks.csv
+
+# With Swarm check-ins — adds a Places tab with a world map
+python export_html.py data/tracks.csv --swarm-dir data/swarm/
+
+# Read both paths from local_settings.json (set once via the dashboard)
+python export_html.py --from-settings
+
+# Specify a custom output path
+python export_html.py data/tracks.csv --output reports/my_report.html
+```
+
+The exported file contains tabbed sections:
+
+| Section | Contents | Requires |
+|---|---|---|
+| **Overview** | Top 20 artists, tracks, and albums by play count | Last.fm CSV |
+| **Listening** | Monthly activity timeline and cumulative growth | Last.fm CSV |
+| **Insights** | Hour-of-day distribution, day×hour heatmap, milestones, and streaks | Last.fm CSV |
+| **Places** | World map (natural-earth projection, no tiles), top cities, top countries | Swarm JSON export |
+
+The report is a single `.html` file — share it by email, host it on any static file server, or keep it locally.  No server process needs to stay running.
 
 **Advanced Usage with Environment Variables:**
 You can pre-configure data paths and privacy settings using environment variables.
@@ -150,6 +180,7 @@ Additional utility scripts are available in the `tools/` directory:
 ```
 autobiographer.py       # Last.fm API fetch + data save CLI
 visualize.py            # Streamlit dashboard (assembles views from plugins)
+export_html.py          # Static HTML export — single self-contained report file
 analysis_utils.py       # Shared data processing and caching logic
 core/
   broker.py             # DataBroker: loads plugins, merges what-when + where-when
