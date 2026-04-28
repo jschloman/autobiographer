@@ -24,7 +24,34 @@ Autobiographer is a Python-based toolkit that allows you to fetch, store, and ex
 
 <img src="assets/flythrough.gif" style="width: 500">
 
-## Getting Started
+## Quickstart (Docker)
+
+No Python knowledge required — just [Docker](https://www.docker.com/products/docker-desktop/).
+
+```bash
+git clone https://github.com/jschloman/autobiographer.git
+cd autobiographer
+docker compose up
+```
+
+Then open **http://localhost:8501** in your browser. The dashboard starts immediately.
+
+Drop your Last.fm CSV into `data/` and it will appear automatically — no container restart needed. The `data/` directory is mounted as a volume: nothing is baked into the image, and your data stays on your machine.
+
+### Fetching your data from within Docker
+
+To download your listening history directly into the mounted data volume, pass your Last.fm credentials:
+
+```bash
+cp .env.example .env           # fill in your API key, secret, and username
+docker compose run --rm dashboard \
+    python autobiographer.py --user YOUR_USERNAME
+docker compose up
+```
+
+---
+
+## Manual Setup (Python)
 
 ### 1. Prerequisites
 
