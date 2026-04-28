@@ -97,53 +97,123 @@ class TestAutobiographer(unittest.TestCase):
         self.assertEqual(params.get("from"), 1610000000)
         self.assertEqual(params.get("to"), 1610000100)
 
-    @patch("autobiographer.Autobiographer.fetch_recent_tracks")
-    @patch("autobiographer.Autobiographer.save_tracks_to_csv")
-    @patch("os.getenv")
-    @patch("argparse.ArgumentParser.parse_args")
-    def test_main_with_to_date(self, mock_args, mock_getenv, mock_save, mock_fetch):
-        # Mock CLI arguments with a specific to_date
-        mock_args.return_value = MagicMock(
-            user="test_user", pages=None, from_date=None, to_date="2026-01-01"
+    def test_parse_date_valid(self):
+        from autobiographer import _parse_date
+
+        ts = _parse_date("2024-06-15", "from_date")
+        self.assertIsInstance(ts, int)
+        self.assertGreater(ts, 0)
+
+    def test_parse_date_empty_returns_none(self):
+        from autobiographer import _parse_date
+
+        self.assertIsNone(_parse_date("", "from_date"))
+
+    def test_parse_date_invalid_raises(self):
+        from autobiographer import _parse_date
+
+        with self.assertRaises(SystemExit):
+            _parse_date("not-a-date", "from_date")
+
+
+class TestRunFetch(unittest.TestCase):
+    """Tests for the _run_fetch CLI dispatcher."""
+
+    def _make_args(self, plugin: str, **kwargs: object) -> MagicMock:
+        args = MagicMock()
+        args.plugin = plugin
+        args.output = kwargs.get("output", None)
+        args.pages = kwargs.get("pages", None)
+        args.from_date = kwargs.get("from_date", None)
+        args.to_date = kwargs.get("to_date", None)
+        return args
+
+    def test_unknown_plugin_exits(self):
+        from autobiographer import _run_fetch
+
+        with patch("plugins.sources.load_builtin_plugins"), patch("plugins.sources.REGISTRY", {}):
+            with self.assertRaises(SystemExit):
+                _run_fetch(self._make_args("unknown_plugin"))
+
+    def test_non_fetchable_plugin_prints_instructions(self):
+        from autobiographer import _run_fetch
+
+        fake_plugin = MagicMock()
+        fake_plugin.FETCHABLE = False
+        fake_plugin.DISPLAY_NAME = "Test Plugin"
+        fake_plugin.get_manual_download_instructions.return_value = "Do this manually."
+        fake_cls = MagicMock(return_value=fake_plugin)
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"testplugin": fake_cls}),
+            patch("builtins.print") as mock_print,
+        ):
+            _run_fetch(self._make_args("testplugin"))
+
+        fake_plugin.get_manual_download_instructions.assert_called_once()
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("Do this manually.", printed)
+
+    def test_missing_env_vars_exits(self):
+        from autobiographer import _run_fetch
+
+        fake_plugin = MagicMock()
+        fake_plugin.FETCHABLE = True
+        fake_plugin.get_fetch_env_vars.return_value = [
+            {"var": "AUTOBIO_MISSING_VAR", "description": "A required var"}
+        ]
+        fake_cls = MagicMock(return_value=fake_plugin)
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"myplugin": fake_cls}),
+            patch("os.getenv", return_value=None),
+        ):
+            with self.assertRaises(SystemExit):
+                _run_fetch(self._make_args("myplugin"))
+
+    def test_fetchable_plugin_calls_fetch(self):
+        from autobiographer import _run_fetch
+
+        fake_plugin = MagicMock()
+        fake_plugin.FETCHABLE = True
+        fake_plugin.get_fetch_env_vars.return_value = []
+        fake_cls = MagicMock(return_value=fake_plugin)
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"myplugin": fake_cls}),
+            patch("builtins.print"),
+        ):
+            _run_fetch(self._make_args("myplugin", output="/tmp/out.csv", pages=2))
+
+        fake_plugin.fetch.assert_called_once_with(
+            output_path="/tmp/out.csv",
+            pages=2,
+            from_ts=None,
+            to_ts=None,
         )
-        mock_getenv.side_effect = lambda k: {
-            "AUTOBIO_LASTFM_API_KEY": "key",
-            "AUTOBIO_LASTFM_API_SECRET": "secret",
-            "AUTOBIO_LASTFM_USERNAME": "test_user",
-        }.get(k)
 
-        from autobiographer import main
+    def test_to_date_shifted_to_end_of_day(self):
+        from autobiographer import _run_fetch
 
-        main()
+        fake_plugin = MagicMock()
+        fake_plugin.FETCHABLE = True
+        fake_plugin.get_fetch_env_vars.return_value = []
+        fake_cls = MagicMock(return_value=fake_plugin)
 
-        # Verify to_ts is end of day for 2026-01-01
-        # 2026-01-01 00:00:00 local timestamp + 86399
-        expected_to_struct = time.strptime("2026-01-01", "%Y-%m-%d")
-        expected_to_ts = int(time.mktime(expected_to_struct)) + 86399
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"myplugin": fake_cls}),
+            patch("builtins.print"),
+        ):
+            _run_fetch(self._make_args("myplugin", to_date="2026-01-01"))
 
-        mock_fetch.assert_called_with(pages=None, from_ts=None, to_ts=expected_to_ts)
-
-    @patch("autobiographer.Autobiographer.fetch_recent_tracks")
-    @patch("autobiographer.Autobiographer.save_tracks_to_csv")
-    @patch("os.getenv")
-    @patch("argparse.ArgumentParser.parse_args")
-    def test_main(self, mock_args, mock_getenv, mock_save, mock_fetch):
-        # Mock CLI arguments and env vars
-        mock_args.return_value = MagicMock(user="test_user", pages=1, from_date=None, to_date=None)
-        mock_getenv.side_effect = lambda k: {
-            "AUTOBIO_LASTFM_API_KEY": "key",
-            "AUTOBIO_LASTFM_API_SECRET": "secret",
-            "AUTOBIO_LASTFM_USERNAME": "user",
-        }.get(k)
-
-        mock_fetch.return_value = []
-
-        from autobiographer import main
-
-        main()
-
-        mock_fetch.assert_called_with(pages=1, from_ts=None, to_ts=None)
-        mock_save.assert_called_once()
+        _, call_kwargs = fake_plugin.fetch.call_args
+        to_ts = call_kwargs["to_ts"]
+        expected_base = int(time.mktime(time.strptime("2026-01-01", "%Y-%m-%d")))
+        self.assertEqual(to_ts, expected_base + 86399)
 
 
 if __name__ == "__main__":

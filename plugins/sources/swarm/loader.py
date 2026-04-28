@@ -36,12 +36,6 @@ class SwarmPlugin(SourcePlugin):
                 "label": "Swarm JSON export directory",
                 "type": "dir_path",
             },
-            {
-                "key": "assumptions_file",
-                "label": "Location assumptions JSON (optional)",
-                "type": "file_path",
-                "file_types": [("JSON files", "*.json"), ("All files", "*.*")],
-            },
         ]
 
     def load(self, config: dict[str, Any]) -> pd.DataFrame:
@@ -81,6 +75,23 @@ class SwarmPlugin(SourcePlugin):
 
         validate_schema(df, self.PLUGIN_TYPE)
         return df
+
+    def get_manual_download_instructions(self) -> str:
+        """Return instructions for requesting a Foursquare/Swarm data export.
+
+        Returns:
+            Multi-line instruction string.
+        """
+        return (
+            "Foursquare/Swarm does not offer a public API for bulk check-in export.\n\n"
+            "To request your data:\n"
+            "  1. Open the Foursquare City Guide app\n"
+            "  2. Go to Settings → Privacy → Request My Data\n"
+            "  3. Wait for the email from Foursquare with your download link\n"
+            "  4. Download and unzip the archive\n"
+            "  5. Point the 'Swarm JSON export directory' setting at the unzipped folder\n\n"
+            "See: https://support.foursquare.com/hc/en-us/articles/360046927274"
+        )
 
     def get_schema(self) -> dict[str, str]:
         """Return column descriptions for the Swarm plugin.

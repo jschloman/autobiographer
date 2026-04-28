@@ -24,6 +24,18 @@ Autobiographer is a Python-based toolkit that allows you to fetch, store, and ex
 
 <img src="assets/flythrough.gif" style="width: 500">
 
+## Data Sources
+
+Autobiographer is built around a plugin system. Each plugin owns a specific data source — its format, how to obtain it, and how it maps into the common schema. All path configuration happens in the sidebar; nothing is hardcoded.
+
+| Plugin | Type | Description |
+|--------|------|-------------|
+| [Last.fm Music History](plugins/sources/lastfm/README.md) | what-when | Your complete listening history, fetched automatically via the Last.fm API. One click in the sidebar downloads everything. |
+| [Foursquare / Swarm Check-ins](plugins/sources/swarm/README.md) | where-when | Your check-in history from the Swarm app. Requires a one-time manual data export request from Foursquare. |
+| [Location Assumptions](plugins/sources/assumptions/README.md) | location-context | A user-authored JSON file that fills in your location for periods not covered by Swarm — trips, recurring holidays, and home residency rules. |
+
+Each plugin has its own README with setup instructions, data format details, and schema documentation.
+
 ## Quickstart (Docker)
 
 No Python knowledge required — just [Docker](https://www.docker.com/products/docker-desktop/).
@@ -45,7 +57,7 @@ To download your listening history directly into the mounted data volume, pass y
 ```bash
 cp .env.example .env           # fill in your API key, secret, and username
 docker compose run --rm dashboard \
-    python autobiographer.py --user YOUR_USERNAME
+    python autobiographer.py fetch lastfm
 docker compose up
 ```
 
@@ -79,20 +91,44 @@ docker compose up
 
 ### 3. Configuration
 
-Set your Last.fm credentials in your environment:
+Set your credentials as environment variables. Required for Last.fm fetching:
 ```bash
 export AUTOBIO_LASTFM_API_KEY="your_api_key"
 export AUTOBIO_LASTFM_API_SECRET="your_api_secret"
 export AUTOBIO_LASTFM_USERNAME="your_username"
 ```
 
+Get a Last.fm API key at: https://www.last.fm/api/account/create
+
 ### 4. Usage
 
 #### Fetch Your Data
-Download your listening history to a local CSV file:
+
+The `fetch` command targets a specific plugin. Plugins that support automatic download
+will retrieve your data; plugins that require a manual export will print step-by-step
+instructions instead.
+
 ```bash
-python autobiographer.py --user your_username
+# Download Last.fm listening history (requires env vars above)
+python autobiographer.py fetch lastfm
+
+# Print Foursquare/Swarm manual export instructions
+python autobiographer.py fetch swarm
+
+# Limit to recent pages or a date range
+python autobiographer.py fetch lastfm --pages 5
+python autobiographer.py fetch lastfm --from-date 2024-01-01 --to-date 2024-12-31
+
+# Save to a custom location
+python autobiographer.py fetch lastfm --output data/my_tracks.csv
 ```
+
+If a plugin is not yet configured the command will list exactly which environment
+variables are missing and what each one is for.
+
+The app sidebar also exposes this directly: a **Fetch Latest Data** button appears for
+plugins that support automatic retrieval, and step-by-step manual instructions are
+shown for plugins that require a data export from the provider.
 
 #### Launch the Streamlit Dashboard
 Start the interactive Streamlit application:
@@ -205,7 +241,7 @@ Additional utility scripts are available in the `tools/` directory:
 ## Project Structure
 
 ```
-autobiographer.py       # Last.fm API fetch + data save CLI
+autobiographer.py       # Data-fetching CLI (`fetch <plugin>`) + Last.fm API client
 visualize.py            # Streamlit dashboard (assembles views from plugins)
 export_html.py          # Static HTML export — single self-contained report file
 analysis_utils.py       # Shared data processing and caching logic
@@ -215,8 +251,9 @@ plugins/
   sources/
     base.py             # SourcePlugin ABC + validate_schema()
     __init__.py         # REGISTRY + @register decorator + load_builtin_plugins()
-    lastfm/loader.py    # Last.fm source plugin
-    swarm/loader.py     # Foursquare/Swarm source plugin
+    lastfm/loader.py        # Last.fm source plugin
+    swarm/loader.py         # Foursquare/Swarm source plugin
+    assumptions/loader.py   # Location assumptions plugin
 notebooks/              # Jupyter notebooks for custom analysis
 tools/                  # Utility scripts (audio muxing, etc.)
 data/                   # Local data storage (CSVs, cache, Swarm JSON exports)
@@ -389,6 +426,7 @@ Selected paths are persisted to `data/config.json` so they survive application r
 |---|---|
 | `what-when` | `timestamp`, `label`, `sublabel`, `category`, `source_id` |
 | `where-when` | `timestamp`, `lat`, `lng`, `place_name`, `place_type`, `source_id` |
+| `location-context` | No required columns — defines enrichment data, not a primary stream |
 
 `validate_schema()` raises `ValueError` at load time if any required column is absent.
 

@@ -42,5 +42,6 @@ def load_builtin_plugins() -> None:
 
     Call this once at application startup before reading REGISTRY.
     """
+    import plugins.sources.assumptions.loader  # noqa: F401
     import plugins.sources.lastfm.loader  # noqa: F401
     import plugins.sources.swarm.loader  # noqa: F401
