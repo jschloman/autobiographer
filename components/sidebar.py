@@ -166,6 +166,81 @@ def _path_input(
     return str(st.session_state.get(session_key, default))
 
 
+def _render_plugin_fetch_section(
+    plugin: Any, config: dict[str, str]
+) -> tuple[bool, str | None, str]:
+    """Render a fetch button or manual-download guidance inside a plugin expander.
+
+    For fetchable plugins (``FETCHABLE`` is True): shows required env vars that
+    are unset, or a "Fetch Latest Data" button if all env vars are present.
+
+    For non-fetchable plugins: shows manual download instructions when no data
+    path has been configured yet.
+
+    The actual fetch is intentionally NOT executed here. This function only
+    renders the button and returns whether it was clicked and where to save the
+    result. The caller runs the fetch *after* all expanders are closed so that
+    progress updates appear in a sidebar-level placeholder that is always
+    visible (widgets inside a collapsed expander are invisible).
+
+    Args:
+        plugin: Instantiated SourcePlugin.
+        config: Current config values returned by ``_render_plugin_config``.
+
+    Returns:
+        Tuple of (fetch_triggered, output_path, primary_key) where
+        ``fetch_triggered`` is True when the user clicked "Fetch Latest Data",
+        ``output_path`` is the resolved destination path (or empty string), and
+        ``primary_key`` is the config field key for the primary path so the
+        caller can auto-populate session state after a successful fetch.
+    """
+    from plugins.sources.base import SourcePlugin
+
+    if not isinstance(plugin, SourcePlugin):
+        return False, None, ""
+
+    st.markdown("---")
+
+    if plugin.FETCHABLE:
+        env_vars = plugin.get_fetch_env_vars()
+        missing_vars = [v for v in env_vars if not os.getenv(v["var"])]
+
+        if missing_vars:
+            st.caption("**Auto-fetch** requires these env vars:")
+            for v in missing_vars:
+                st.code(f'{v["var"]}="…"', language="bash")
+                st.caption(v["description"])
+            return False, None, ""
+
+        # Show which account is configured so the user can confirm before fetching.
+        identity = plugin.get_fetch_identity()
+        if identity:
+            st.caption(f"Fetching as **{identity}**")
+
+        # Resolve the save path: prefer the already-configured primary
+        # field value; fall back to the plugin's default output path.
+        primary_key = next(iter(config.keys()), "") if config else ""
+        primary_value = next(iter(config.values()), "") if config else ""
+        output_path = primary_value.strip() or plugin.get_default_output_path() or None
+
+        if output_path:
+            st.caption(f"Saves to `{output_path}`")
+
+        triggered = st.button(
+            "Fetch Latest Data",
+            key=f"fetch_{plugin.PLUGIN_ID}",
+            help=f"Download {plugin.DISPLAY_NAME} data now",
+        )
+        return triggered, output_path, primary_key
+    else:
+        # Only surface instructions when data isn't configured yet — no need to
+        # clutter the expander for users who already have their data loaded.
+        primary_value = next(iter(config.values()), "") if config else ""
+        if not primary_value.strip() or not os.path.exists(primary_value.strip()):
+            st.info(plugin.get_manual_download_instructions())
+        return False, None, ""
+
+
 def _render_plugin_config(plugin_id: str, fields: list[dict[str, Any]]) -> dict[str, str]:
     """Render sidebar config fields for one plugin and return collected values.
 
@@ -218,27 +293,78 @@ def render_sidebar() -> None:
     )
 
     configs: dict[str, dict[str, str]] = {}
+    # Collect any fetch requests from the expanders so they can be executed
+    # after all expanders are rendered. Widgets inside a collapsed expander are
+    # invisible; running the fetch outside ensures progress updates are shown.
+    pending_fetches: list[tuple[Any, str, str | None, str]] = []
+
     for plugin_id, plugin_cls in REGISTRY.items():
         plugin = plugin_cls()
         fields = plugin.get_config_fields()
 
         # Auto-expand the section when the primary path is not yet configured
         # so first-time users immediately see they need to fill it in.
+        # Also auto-expand when the saved path no longer exists on disk so
+        # users can immediately browse for a replacement.
         primary_key = f"{plugin_id}_{fields[0]['key']}" if fields else ""
-        is_configured = bool(st.session_state.get(primary_key, "").strip())
+        primary_value = st.session_state.get(primary_key, "").strip()
+        primary_type = fields[0].get("type", "text") if fields else "text"
+        primary_path_missing = (
+            bool(primary_value)
+            and primary_type in ("file_path", "dir_path")
+            and not os.path.exists(primary_value)
+        )
+        is_configured = bool(primary_value) and not primary_path_missing
 
         with st.sidebar.expander(
             f"{plugin.ICON}  {plugin.DISPLAY_NAME}", expanded=not is_configured
         ):
+            if primary_path_missing:
+                st.warning("Path no longer found — please select a new location.")
             configs[plugin_id] = _render_plugin_config(plugin_id, fields)
+            triggered, output_path, cfg_key = _render_plugin_fetch_section(
+                plugin, configs[plugin_id]
+            )
+            if triggered:
+                pending_fetches.append((plugin, plugin_id, output_path, cfg_key))
+
+    # Execute any pending fetches with a sidebar-level status placeholder that
+    # is always visible regardless of expander collapsed/expanded state.
+    if pending_fetches:
+        fetch_status = st.sidebar.empty()
+        for plugin, plugin_id, output_path, cfg_key in pending_fetches:
+            primary_value = configs.get(plugin_id, {}).get(cfg_key, "")
+            fetch_status.info(f"Starting fetch for {plugin.DISPLAY_NAME}…")
+
+            def _on_progress(page: int, total: int, _status: Any = fetch_status) -> None:
+                _status.info(f"Fetching page {page} of {total}…")
+
+            try:
+                plugin.fetch(
+                    output_path=output_path,
+                    progress_callback=_on_progress,
+                )
+                # Auto-populate the config field so the user doesn't need
+                # to manually enter the path after a successful fetch.
+                if output_path and cfg_key and not primary_value.strip():
+                    session_key = f"{plugin_id}_{cfg_key}"
+                    st.session_state[session_key] = output_path
+                    _settings.set_plugin_value(plugin_id, cfg_key, output_path)
+                fetch_status.success(
+                    f"Done — data saved to `{output_path}`. "
+                    "Reload the page to see the updated data."
+                )
+            except Exception as exc:  # noqa: BLE001
+                fetch_status.error(f"Fetch failed: {exc}")
 
     # --- Data loading ---------------------------------------------------------
     lastfm_cfg = configs.get("lastfm", {})
     swarm_cfg = configs.get("swarm", {})
+    assumptions_cfg = configs.get("assumptions", {})
 
     file_path: str = lastfm_cfg.get("data_path", "")
     swarm_dir: str = swarm_cfg.get("swarm_dir", "")
-    assumptions_path: str = swarm_cfg.get("assumptions_file", "default_assumptions.json")
+    assumptions_path: str = assumptions_cfg.get("assumptions_file", "default_assumptions.json")
 
     if not file_path or not os.path.exists(file_path):
         if file_path:

@@ -91,6 +91,113 @@ class TestPathInput(unittest.TestCase):
         self.assertIn("data_path", result)
 
 
+class TestSidebarExpansion(unittest.TestCase):
+    """Tests that plugin expanders auto-expand when a saved path no longer exists."""
+
+    def _make_sidebar_mocks(
+        self, mock_columns: MagicMock, mock_button: MagicMock
+    ) -> tuple[MagicMock, MagicMock]:
+        col1, col2 = MagicMock(), MagicMock()
+        mock_columns.return_value = [col1, col2]
+        mock_button.return_value = False
+        col2.button.return_value = False
+        return col1, col2
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    @patch("streamlit.warning")
+    def test_expander_opens_and_warns_when_path_missing(
+        self, mock_warning: MagicMock, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        """When session state holds a nonexistent path, the expander is expanded and a warning shown."""
+        self._make_sidebar_mocks(mock_columns, mock_button)
+        expander_ctx = MagicMock()
+        expander_ctx.__enter__ = MagicMock(return_value=expander_ctx)
+        expander_ctx.__exit__ = MagicMock(return_value=False)
+
+        session = {"lastfm_data_path": "/nonexistent/tracks.csv"}
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar._settings") as mock_settings,
+            patch("components.sidebar.REGISTRY", {"lastfm": MagicMock()}),
+            patch("components.sidebar.load_builtin_plugins"),
+            patch("components.sidebar._load_config_into_session_state"),
+            patch("streamlit.sidebar") as mock_sidebar,
+            patch("os.path.exists", return_value=False),
+        ):
+            mock_settings.get_all_plugin_configs.return_value = {}
+            plugin_instance = MagicMock()
+            plugin_instance.ICON = ":material/headphones:"
+            plugin_instance.DISPLAY_NAME = "Last.fm"
+            plugin_instance.get_config_fields.return_value = [
+                {"key": "data_path", "label": "CSV", "type": "file_path"}
+            ]
+            mock_sidebar.expander.return_value = expander_ctx
+            import components.sidebar as sidebar_mod
+
+            sidebar_mod.REGISTRY["lastfm"].return_value = plugin_instance
+
+            from components.sidebar import render_sidebar
+
+            render_sidebar()
+
+        # Expander must be called with expanded=True when path is missing
+        mock_sidebar.expander.assert_called_once()
+        _, kwargs = mock_sidebar.expander.call_args
+        self.assertTrue(kwargs.get("expanded"), "Expander should be expanded when path is missing")
+        mock_warning.assert_called_once()
+
+    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("streamlit.columns")
+    @patch("streamlit.button", return_value=False)
+    @patch("streamlit.warning")
+    def test_expander_collapsed_and_no_warning_when_path_exists(
+        self, mock_warning: MagicMock, mock_button: MagicMock, mock_columns: MagicMock
+    ) -> None:
+        """When session state holds an existing path, the expander is collapsed and no warning shown."""
+        self._make_sidebar_mocks(mock_columns, mock_button)
+        expander_ctx = MagicMock()
+        expander_ctx.__enter__ = MagicMock(return_value=expander_ctx)
+        expander_ctx.__exit__ = MagicMock(return_value=False)
+
+        session = {"lastfm_data_path": "/real/tracks.csv"}
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar._settings") as mock_settings,
+            patch("components.sidebar.REGISTRY", {"lastfm": MagicMock()}),
+            patch("components.sidebar.load_builtin_plugins"),
+            patch("components.sidebar._load_config_into_session_state"),
+            patch("streamlit.sidebar") as mock_sidebar,
+            patch("components.sidebar.os.path.exists", return_value=True),
+            patch("components.sidebar.get_cache_key", return_value="key"),
+            patch("components.sidebar.get_cached_data", return_value=None),
+            patch("components.sidebar.load_assumptions", return_value={}),
+            patch("components.sidebar.load_listening_data", return_value=None),
+        ):
+            mock_settings.get_all_plugin_configs.return_value = {}
+            mock_sidebar.button.return_value = False
+            plugin_instance = MagicMock()
+            plugin_instance.ICON = ":material/headphones:"
+            plugin_instance.DISPLAY_NAME = "Last.fm"
+            plugin_instance.get_config_fields.return_value = [
+                {"key": "data_path", "label": "CSV", "type": "file_path"}
+            ]
+            mock_sidebar.expander.return_value = expander_ctx
+            import components.sidebar as sidebar_mod
+
+            sidebar_mod.REGISTRY["lastfm"].return_value = plugin_instance
+
+            from components.sidebar import render_sidebar
+
+            render_sidebar()
+
+        mock_sidebar.expander.assert_called_once()
+        _, kwargs = mock_sidebar.expander.call_args
+        self.assertFalse(kwargs.get("expanded"), "Expander should be collapsed when path exists")
+        mock_warning.assert_not_called()
+
+
 class TestConfigPersistence(unittest.TestCase):
     """Tests for LocalSettings-backed session state hydration."""
 

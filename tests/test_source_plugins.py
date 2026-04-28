@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
 from plugins.sources import REGISTRY, load_builtin_plugins
+from plugins.sources.assumptions.loader import AssumptionsPlugin
 from plugins.sources.base import SourcePlugin, validate_schema
 from plugins.sources.lastfm.loader import LastFmPlugin
 from plugins.sources.swarm.loader import SwarmPlugin
@@ -65,6 +66,9 @@ class TestRegistry(unittest.TestCase):
 
     def test_swarm_registered(self):
         self.assertIn("swarm", REGISTRY)
+
+    def test_assumptions_registered(self):
+        self.assertIn("assumptions", REGISTRY)
 
     def test_registry_values_are_source_plugin_subclasses(self):
         for plugin_cls in REGISTRY.values():
@@ -177,12 +181,6 @@ class TestSwarmPlugin(unittest.TestCase):
         swarm_dir_field = next(f for f in fields if f["key"] == "swarm_dir")
         self.assertEqual(swarm_dir_field["type"], "dir_path")
 
-    def test_assumptions_field_type_is_file_path(self):
-        fields = self.plugin.get_config_fields()
-        assumptions_field = next(f for f in fields if f["key"] == "assumptions_file")
-        self.assertEqual(assumptions_field["type"], "file_path")
-        self.assertIn("file_types", assumptions_field)
-
     def test_load_adds_normalized_columns(self):
         with patch("analysis_utils.load_swarm_data") as mock_load:
             mock_load.return_value = self.fixture_df.copy()
@@ -207,6 +205,213 @@ class TestSwarmPlugin(unittest.TestCase):
         schema = self.plugin.get_schema()
         self.assertIsInstance(schema, dict)
         self.assertIn("lat", schema)
+
+
+class TestAssumptionsPlugin(unittest.TestCase):
+    """Tests for the AssumptionsPlugin."""
+
+    def setUp(self):
+        self.plugin = AssumptionsPlugin()
+        self.fixture_data = {
+            "defaults": {
+                "city": "London, GB",
+                "lat": 51.5074,
+                "lng": -0.1278,
+                "timezone": "Europe/London",
+            },
+            "trips": [
+                {
+                    "start": "2023-06-01",
+                    "end": "2023-06-07",
+                    "city": "Paris, FR",
+                    "lat": 48.8566,
+                    "lng": 2.3522,
+                    "timezone": "Europe/Paris",
+                }
+            ],
+            "holidays": [
+                {
+                    "name": "Christmas",
+                    "month": 12,
+                    "day_range": [24, 26],
+                    "city": "Edinburgh, GB",
+                    "lat": 55.9533,
+                    "lng": -3.1883,
+                    "timezone": "Europe/London",
+                }
+            ],
+            "residency": [
+                {
+                    "start": "2020-01-01",
+                    "end": "2025-12-31",
+                    "city": "Home",
+                    "sub_rules": [],
+                }
+            ],
+        }
+
+    def test_plugin_type(self):
+        self.assertEqual(self.plugin.PLUGIN_TYPE, "location-context")
+
+    def test_plugin_id(self):
+        self.assertEqual(self.plugin.PLUGIN_ID, "assumptions")
+
+    def test_config_fields_returns_list(self):
+        fields = self.plugin.get_config_fields()
+        self.assertIsInstance(fields, list)
+        self.assertTrue(any(f["key"] == "assumptions_file" for f in fields))
+
+    def test_config_field_type_is_file_path(self):
+        fields = self.plugin.get_config_fields()
+        field = next(f for f in fields if f["key"] == "assumptions_file")
+        self.assertEqual(field["type"], "file_path")
+        self.assertIn("file_types", field)
+
+    def test_load_returns_dataframe(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = self.fixture_data
+            df = self.plugin.load({"assumptions_file": "fake/path.json"})
+        self.assertIsInstance(df, pd.DataFrame)
+
+    def test_load_includes_trip_row(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = self.fixture_data
+            df = self.plugin.load({"assumptions_file": "fake/path.json"})
+        trips = df[df["type"] == "trip"]
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(trips.iloc[0]["city"], "Paris, FR")
+
+    def test_load_includes_holiday_row(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = self.fixture_data
+            df = self.plugin.load({"assumptions_file": "fake/path.json"})
+        holidays = df[df["type"] == "holiday"]
+        self.assertEqual(len(holidays), 1)
+        self.assertEqual(holidays.iloc[0]["city"], "Edinburgh, GB")
+
+    def test_load_includes_default_row(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = self.fixture_data
+            df = self.plugin.load({"assumptions_file": "fake/path.json"})
+        defaults = df[df["type"] == "default"]
+        self.assertEqual(len(defaults), 1)
+        self.assertEqual(defaults.iloc[0]["city"], "London, GB")
+
+    def test_load_includes_residency_row(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = self.fixture_data
+            df = self.plugin.load({"assumptions_file": "fake/path.json"})
+        residency = df[df["type"] == "residency"]
+        self.assertEqual(len(residency), 1)
+
+    def test_load_returns_empty_df_when_no_data(self):
+        with patch("analysis_utils.load_assumptions") as mock_load:
+            mock_load.return_value = {"defaults": {}, "trips": [], "holidays": [], "residency": []}
+            df = self.plugin.load({"assumptions_file": ""})
+        self.assertTrue(df.empty)
+
+    def test_get_schema_returns_dict(self):
+        schema = self.plugin.get_schema()
+        self.assertIsInstance(schema, dict)
+        self.assertIn("type", schema)
+        self.assertIn("city", schema)
+
+    def test_get_manual_download_instructions_mentions_example_file(self):
+        instructions = self.plugin.get_manual_download_instructions()
+        self.assertIn("default_assumptions.json.example", instructions)
+
+
+class TestFetchability(unittest.TestCase):
+    """Tests for FETCHABLE, get_fetch_env_vars, fetch, and get_manual_download_instructions."""
+
+    def setUp(self):
+        load_builtin_plugins()
+
+    # --- base class defaults --------------------------------------------------
+
+    def test_base_fetchable_is_false_by_default(self):
+        plugin = SwarmPlugin()
+        self.assertFalse(plugin.FETCHABLE)
+
+    def test_base_get_fetch_env_vars_returns_empty_list(self):
+        plugin = SwarmPlugin()
+        self.assertEqual(plugin.get_fetch_env_vars(), [])
+
+    def test_base_fetch_raises_not_implemented(self):
+        plugin = SwarmPlugin()
+        with self.assertRaises(NotImplementedError):
+            plugin.fetch()
+
+    def test_base_get_manual_download_instructions_returns_string(self):
+        plugin = SwarmPlugin()
+        instructions = plugin.get_manual_download_instructions()
+        self.assertIsInstance(instructions, str)
+        self.assertTrue(len(instructions) > 0)
+
+    # --- LastFmPlugin ---------------------------------------------------------
+
+    def test_lastfm_fetchable_is_true(self):
+        self.assertTrue(LastFmPlugin.FETCHABLE)
+
+    def test_lastfm_get_fetch_env_vars_lists_three_vars(self):
+        plugin = LastFmPlugin()
+        env_vars = plugin.get_fetch_env_vars()
+        var_names = [v["var"] for v in env_vars]
+        self.assertIn("AUTOBIO_LASTFM_API_KEY", var_names)
+        self.assertIn("AUTOBIO_LASTFM_API_SECRET", var_names)
+        self.assertIn("AUTOBIO_LASTFM_USERNAME", var_names)
+
+    def test_lastfm_fetch_env_var_dicts_have_description(self):
+        plugin = LastFmPlugin()
+        for entry in plugin.get_fetch_env_vars():
+            self.assertIn("var", entry)
+            self.assertIn("description", entry)
+            self.assertTrue(entry["description"])
+
+    def test_lastfm_fetch_raises_os_error_when_env_vars_missing(self):
+        plugin = LastFmPlugin()
+        with patch("os.getenv", return_value=None):
+            with self.assertRaises(OSError) as ctx:
+                plugin.fetch()
+        self.assertIn("AUTOBIO_LASTFM_API_KEY", str(ctx.exception))
+
+    def test_lastfm_fetch_calls_autobiographer_when_env_vars_set(self):
+        plugin = LastFmPlugin()
+        env = {
+            "AUTOBIO_LASTFM_API_KEY": "key",
+            "AUTOBIO_LASTFM_API_SECRET": "secret",
+            "AUTOBIO_LASTFM_USERNAME": "user",
+        }
+        mock_client = MagicMock()
+        mock_client.fetch_recent_tracks.return_value = []
+        with (
+            patch("os.getenv", side_effect=lambda k, default="": env.get(k, default)),
+            patch("autobiographer.Autobiographer", return_value=mock_client),
+        ):
+            plugin.fetch(output_path="/tmp/out.csv", pages=2)
+
+        mock_client.fetch_recent_tracks.assert_called_once_with(
+            pages=2, from_ts=None, to_ts=None, progress_callback=None
+        )
+        mock_client.save_tracks_to_csv.assert_called_once_with([], filename="/tmp/out.csv")
+
+    def test_lastfm_get_manual_download_instructions_mentions_command(self):
+        plugin = LastFmPlugin()
+        instructions = plugin.get_manual_download_instructions()
+        self.assertIn("autobiographer.py fetch lastfm", instructions)
+
+    # --- SwarmPlugin ----------------------------------------------------------
+
+    def test_swarm_get_manual_download_instructions_mentions_foursquare(self):
+        plugin = SwarmPlugin()
+        instructions = plugin.get_manual_download_instructions()
+        self.assertIn("Foursquare", instructions)
+
+    def test_swarm_get_manual_download_instructions_has_steps(self):
+        plugin = SwarmPlugin()
+        instructions = plugin.get_manual_download_instructions()
+        # Instructions should walk the user through numbered steps.
+        self.assertIn("1.", instructions)
 
 
 if __name__ == "__main__":

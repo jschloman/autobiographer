@@ -12,6 +12,7 @@ Run with::
 from __future__ import annotations
 
 import streamlit as st
+from dotenv import load_dotenv
 
 from components.sidebar import render_sidebar
 from pages.beer import render_beer
@@ -21,6 +22,8 @@ from pages.insights import render_insights, render_insights_and_narrative  # noq
 from pages.music import render_music, render_timeline_analysis  # noqa: F401
 from pages.overview import render_overview, render_top_charts  # noqa: F401
 from pages.places import render_places, render_spatial_analysis  # noqa: F401
+
+load_dotenv()
 
 _SIDEBAR_CSS = """
 <style>
