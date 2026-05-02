@@ -95,82 +95,67 @@ class TestPathInput(unittest.TestCase):
         self.assertIn("data_path", result)
 
 
-class TestSidebarHealthBadges(unittest.TestCase):
-    """Tests that the sidebar displays health badges reflecting plugin status."""
+class TestSidebarDataLoading(unittest.TestCase):
+    """Tests that the sidebar loads data and sets session state correctly."""
 
-    def _make_plugin(self, data_path: str) -> MagicMock:
-        plugin_instance = MagicMock()
-        plugin_instance.DISPLAY_NAME = "Last.fm"
-        plugin_instance.get_config_fields.return_value = [
+    def test_render_sidebar_sets_df_none_when_no_file_path(self) -> None:
+        """render_sidebar sets df=None when no Last.fm file is configured."""
+        plugin_cls = MagicMock(return_value=MagicMock())
+        plugin_cls.return_value.get_config_fields.return_value = [
             {"key": "data_path", "label": "CSV", "type": "file_path"}
         ]
-        plugin_instance.get_health_status.return_value = {
-            "status": "error" if not data_path else "healthy",
-            "record_count": None,
-            "last_fetch": None,
-            "data_path": data_path or None,
-        }
-        return plugin_instance
-
-    def test_render_sidebar_calls_get_health_status_per_plugin(self) -> None:
-        """render_sidebar calls get_health_status for each registered plugin."""
-        plugin_instance = self._make_plugin("/real/tracks.csv")
-        plugin_cls = MagicMock(return_value=plugin_instance)
-
-        session = {"lastfm_data_path": "/real/tracks.csv"}
-        with (
-            patch("streamlit.session_state", session),
-            patch("components.plugin_config.settings") as mock_settings,
-            patch("components.sidebar.settings", mock_settings),
-            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
-            patch("components.sidebar.load_builtin_plugins"),
-            patch("components.sidebar.load_config_into_session_state"),
-            patch("streamlit.sidebar") as mock_sidebar,
-            patch("components.sidebar.os.path.exists", return_value=False),
-        ):
-            mock_settings.get_fetch_history.return_value = []
-            mock_sidebar.button.return_value = False
-
-            from components.sidebar import render_sidebar
-
-            render_sidebar()
-
-        plugin_instance.get_health_status.assert_called_once()
-
-    def test_render_sidebar_shows_error_badge_for_missing_path(self) -> None:
-        """When health status is 'error', sidebar markdown includes the ❌ badge."""
-        plugin_instance = self._make_plugin("")
-        plugin_instance.get_health_status.return_value = {
-            "status": "error",
-            "record_count": None,
-            "last_fetch": None,
-            "data_path": "/gone.csv",
-        }
-        plugin_cls = MagicMock(return_value=plugin_instance)
-
-        markdown_calls: list[str] = []
-
         session: dict = {}
         with (
             patch("streamlit.session_state", session),
-            patch("components.plugin_config.settings") as mock_settings,
-            patch("components.sidebar.settings", mock_settings),
             patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
             patch("components.sidebar.load_builtin_plugins"),
             patch("components.sidebar.load_config_into_session_state"),
-            patch("streamlit.sidebar") as mock_sidebar,
+            patch("components.sidebar.get_plugin_config_from_session", return_value={}),
             patch("components.sidebar.os.path.exists", return_value=False),
         ):
-            mock_settings.get_fetch_history.return_value = []
-            mock_sidebar.button.return_value = False
-            mock_sidebar.markdown.side_effect = lambda s, **_kw: markdown_calls.append(s)
-
             from components.sidebar import render_sidebar
 
             render_sidebar()
 
-        badge_lines = [c for c in markdown_calls if "❌" in c]
-        self.assertTrue(len(badge_lines) > 0, "Expected ❌ badge in sidebar markdown")
+        self.assertIsNone(session.get("df"))
+
+    def test_render_sidebar_stores_cache_hit_status(self) -> None:
+        """render_sidebar sets _cache_status='hit' when cached data is found."""
+        import pandas as pd
+
+        cached_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
+
+        plugin_instance = MagicMock()
+        plugin_instance.get_config_fields.return_value = [
+            {"key": "data_path", "label": "CSV", "type": "file_path"}
+        ]
+        plugin_cls = MagicMock(return_value=plugin_instance)
+
+        session: dict = {"lastfm_data_path": "/some/file.csv"}
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
+            patch("components.sidebar.load_builtin_plugins"),
+            patch("components.sidebar.load_config_into_session_state"),
+            patch(
+                "components.sidebar.get_plugin_config_from_session",
+                return_value={"data_path": "/some/file.csv"},
+            ),
+            patch("components.sidebar.os.path.exists", return_value=True),
+            patch("components.sidebar.load_assumptions", return_value={}),
+            patch("components.sidebar.get_cache_key", return_value="key"),
+            patch("components.sidebar.get_cached_data", return_value=cached_df),
+            patch("streamlit.sidebar") as mock_sidebar,
+        ):
+            mock_sidebar.date_input.return_value = [
+                cached_df["date_text"].min().date(),
+                cached_df["date_text"].max().date(),
+            ]
+            from components.sidebar import render_sidebar
+
+            render_sidebar()
+
+        self.assertEqual(session.get("_cache_status"), "hit")
 
 
 class TestConfigPersistence(unittest.TestCase):
@@ -376,7 +361,7 @@ class TestVisualize(unittest.TestCase):
         mock_pg = MagicMock()
         mock_nav.return_value = mock_pg
 
-        with patch("visualize.render_sidebar"):
+        with patch("visualize.render_sidebar"), patch("visualize.load_builtin_plugins"):
             main()
 
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")

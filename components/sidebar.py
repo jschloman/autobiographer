@@ -1,8 +1,10 @@
-"""Shared sidebar component — shows plugin health badges and loads data.
+"""Shared sidebar component — silently loads data and provides the global date filter.
 
-Plugin configuration and fetch controls have moved to the Data Sources page
-(``pages/data_sources.py``). The sidebar now shows a compact health indicator
-per plugin and handles data loading into ``st.session_state["df"]``.
+Plugin health badges and cache management have moved to the Data Sources pages.
+This module's only responsibilities are:
+  1. Hydrate session state from disk.
+  2. Load and process the active dataset into ``st.session_state["df"]``.
+  3. Expose the global date-range filter.
 """
 
 from __future__ import annotations
@@ -24,47 +26,26 @@ from analysis_utils import (
 from components.plugin_config import (
     get_plugin_config_from_session,
     load_config_into_session_state,
-    settings,
 )
 from plugins.sources import REGISTRY, load_builtin_plugins
 
-_HEALTH_BADGES: dict[str, str] = {
-    "healthy": "✅",
-    "stale": "⚠️",
-    "error": "❌",
-    "unconfigured": "◻️",
-}
-
 
 def render_sidebar() -> None:
-    """Render the sidebar health indicators and populate ``st.session_state['df']``.
+    """Hydrate config, load the dataset, and render the global date filter.
 
-    Loads persisted path config from disk, renders a one-line health badge per
-    source plugin, then loads Last.fm + Swarm data (with local caching), applies
-    location assumptions, and stores the resulting DataFrame under
-    ``st.session_state['df']`` so every page can access it.
+    Populates ``st.session_state["df"]`` with the processed DataFrame (or None
+    if no Last.fm file is configured).  Stores ``st.session_state["_cache_status"]``
+    as ``"hit"`` or ``"miss"`` for the Cache Management tab on the Data Sources page.
     """
     load_builtin_plugins()
     load_config_into_session_state()
 
-    st.sidebar.markdown(
-        '<p class="autobio-section-header">Data Sources</p>', unsafe_allow_html=True
-    )
-
     configs: dict[str, dict[str, str]] = {}
-
     for plugin_id, plugin_cls in REGISTRY.items():
         plugin = plugin_cls()
         fields = plugin.get_config_fields()
-        config = get_plugin_config_from_session(plugin_id, fields)
-        configs[plugin_id] = config
+        configs[plugin_id] = get_plugin_config_from_session(plugin_id, fields)
 
-        history = settings.get_fetch_history(plugin_id)
-        health = plugin.get_health_status(config, history)
-        badge = _HEALTH_BADGES.get(health["status"], "◻️")
-        st.sidebar.markdown(f"{plugin.DISPLAY_NAME}&nbsp;&nbsp;{badge}")
-
-    # --- Data loading ---------------------------------------------------------
     lastfm_cfg = configs.get("lastfm", {})
     swarm_cfg = configs.get("swarm", {})
     assumptions_cfg = configs.get("assumptions", {})
@@ -74,50 +55,28 @@ def render_sidebar() -> None:
     assumptions_path: str = assumptions_cfg.get("assumptions_file", "default_assumptions.json")
 
     if not file_path or not os.path.exists(file_path):
-        if file_path:
-            st.sidebar.error(f"File not found: '{file_path}'")
         st.session_state["df"] = None
         return
 
     assumptions = load_assumptions(assumptions_path)
 
-    st.sidebar.markdown(
-        '<p class="autobio-section-header">Cache Management</p>', unsafe_allow_html=True
-    )
     cache_key = get_cache_key(file_path, swarm_dir, assumptions_path)
     df: pd.DataFrame | None = get_cached_data(cache_key)
 
     if df is None:
+        st.session_state["_cache_status"] = "miss"
         df = load_listening_data(file_path)
         if df is not None:
-            with st.spinner("Adjusting timezones and geocoding..."):
+            with st.spinner("Adjusting timezones and geocoding…"):
                 swarm_df = (
                     load_swarm_data(swarm_dir)
                     if swarm_dir and os.path.exists(swarm_dir)
                     else pd.DataFrame()
                 )
                 df = apply_swarm_offsets(df, swarm_df, assumptions)
-
-                if not swarm_df.empty:
-                    st.sidebar.success(f"Applied offsets from {len(swarm_df)} checkins.")
-                elif os.path.exists(assumptions_path):
-                    st.sidebar.info("Applied location assumptions from file.")
-                else:
-                    st.sidebar.warning("No Swarm data or assumptions found; using default.")
-
             save_to_cache(df, cache_key)
-            st.sidebar.info("Data processed and cached locally.")
     else:
-        st.sidebar.success("Loaded from local cache.")
-
-    if st.sidebar.button("Clear Local Cache"):
-        cache_dir = "data/cache"
-        if os.path.exists(cache_dir):
-            import shutil
-
-            shutil.rmtree(cache_dir)
-            st.sidebar.success("Cache cleared!")
-            st.rerun()
+        st.session_state["_cache_status"] = "hit"
 
     if df is not None:
         st.sidebar.markdown(

@@ -1,12 +1,15 @@
 """Data Sources management page.
 
-Provides a full-screen tabbed interface for each source plugin: health status,
-configuration, fetch controls with progress output, and versioned fetch history.
+``render_data_sources`` is the overview hub: summary health metrics and
+Cache Management.  Each plugin has its own dedicated page rendered by
+``render_plugin_page``, which is wired into ``st.navigation`` by
+``visualize.py``.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,12 +32,12 @@ _STATUS_META: dict[str, tuple[str, str]] = {
 
 
 def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
-    """Render the full management UI for one plugin and return its computed health.
+    """Render status, config, fetch, and history UI for one plugin.
 
     Health is computed *after* ``render_plugin_config_fields`` runs so that the
     browse-button pending-key is processed before the status card is filled in.
-    An ``st.empty()`` placeholder keeps Status visually at the top of the tab
-    even though it is filled after Configuration is rendered.
+    An ``st.empty()`` placeholder keeps Status visually at the top even though
+    it is filled after Configuration is rendered.
 
     Args:
         plugin_id: Plugin identifier string.
@@ -172,37 +175,117 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
     return health
 
 
+def render_plugin_page(plugin_id: str) -> None:
+    """Render the standalone management page for a single plugin.
+
+    Called by ``st.Page`` entries in ``visualize.py`` — one page per plugin
+    under the Sources nav group.
+
+    Args:
+        plugin_id: The plugin's PLUGIN_ID string (registry key).
+    """
+    load_builtin_plugins()
+    load_config_into_session_state()
+
+    plugin_cls = REGISTRY.get(plugin_id)
+    if plugin_cls is None:
+        st.error(f"Plugin '{plugin_id}' not found in registry.")
+        return
+
+    plugin = plugin_cls()
+    st.title(plugin.DISPLAY_NAME)
+    _render_plugin_tab(plugin_id, plugin)
+
+
+def _render_cache_tab() -> None:
+    """Render the Cache Management tab content."""
+    cache_dir = "data/cache"
+
+    st.subheader("Cache Status")
+    cache_status = st.session_state.get("_cache_status", "unknown")
+    if cache_status == "hit":
+        st.success("Active dataset loaded from local cache.")
+    elif cache_status == "miss":
+        st.info("Dataset was processed fresh and saved to cache.")
+    else:
+        st.caption("Load the app with a configured Last.fm file to populate cache status.")
+
+    st.divider()
+    st.subheader("Cached Files")
+
+    if os.path.exists(cache_dir):
+        files = [f for f in os.listdir(cache_dir) if not f.startswith(".")]
+        if files:
+            total_bytes = sum(
+                os.path.getsize(os.path.join(cache_dir, f))
+                for f in files
+                if os.path.isfile(os.path.join(cache_dir, f))
+            )
+            st.caption(f"{len(files)} file(s) — {total_bytes / 1024:.1f} KB total")
+            for fname in sorted(files):
+                st.text(fname)
+        else:
+            st.caption("Cache directory is empty.")
+    else:
+        st.caption("No cache directory found.")
+
+    st.divider()
+    if st.button("Clear Local Cache", type="primary"):
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir)
+            st.session_state.pop("_cache_status", None)
+            st.success("Cache cleared.")
+            st.rerun()
+        else:
+            st.info("Nothing to clear — cache directory does not exist.")
+
+
 def render_data_sources() -> None:
-    """Render the Data Sources management page with per-plugin tabs."""
+    """Render the Data Sources overview page (summary metrics + Cache tab)."""
     load_builtin_plugins()
     load_config_into_session_state()
 
     st.title("Data Sources")
-    st.caption("Configure sources, fetch latest data, and manage version history.")
+    st.caption("Health summary across all configured sources.")
 
-    plugins_list = [(pid, cls()) for pid, cls in REGISTRY.items()]
+    overview_tab, cache_tab = st.tabs(["Overview", "Cache Management"])
 
-    # Summary metrics slot — filled after tabs so health reflects current config.
-    summary_ph = st.empty()
+    with overview_tab:
+        plugins_list = [(pid, cls()) for pid, cls in REGISTRY.items()]
 
-    st.divider()
+        # Summary metric row — filled after all plugins report health.
+        summary_ph = st.empty()
+        st.divider()
 
-    tab_labels = [plugin.DISPLAY_NAME for _, plugin in plugins_list]
-    tabs = st.tabs(tab_labels)
+        all_health: list[dict[str, Any]] = []
+        for plugin_id, plugin in plugins_list:
+            fields = plugin.get_config_fields()
+            from components.plugin_config import get_plugin_config_from_session
 
-    all_health: list[dict[str, Any]] = []
-    for tab, (plugin_id, plugin) in zip(tabs, plugins_list):
-        with tab:
-            health = _render_plugin_tab(plugin_id, plugin)
+            config = get_plugin_config_from_session(plugin_id, fields)
+            history = settings.get_fetch_history(plugin_id)
+            health: dict[str, Any] = plugin.get_health_status(config, history)
             all_health.append(health)
 
-    # Fill summary now that all tabs have computed accurate health.
-    counts: dict[str, int] = {"healthy": 0, "stale": 0, "error": 0, "unconfigured": 0}
-    for h in all_health:
-        counts[h["status"]] = counts.get(h["status"], 0) + 1
+            icon, label = _STATUS_META.get(health["status"], ("◻️", health["status"]))
+            rc = health["record_count"]
+            last = (health.get("last_fetch") or "")[:10]
 
-    with summary_ph.container():
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Healthy", counts["healthy"])
-        c2.metric("Stale", counts["stale"])
-        c3.metric("Issues", counts["error"] + counts["unconfigured"])
+            cols = st.columns([3, 1, 2, 2])
+            cols[0].markdown(f"**{plugin.DISPLAY_NAME}**")
+            cols[1].markdown(f"{icon} {label}")
+            cols[2].caption(f"{rc:,} records" if isinstance(rc, int) else "—")
+            cols[3].caption(last or "—")
+
+        counts: dict[str, int] = {"healthy": 0, "stale": 0, "error": 0, "unconfigured": 0}
+        for h in all_health:
+            counts[h["status"]] = counts.get(h["status"], 0) + 1
+
+        with summary_ph.container():
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Healthy", counts["healthy"])
+            c2.metric("Stale", counts["stale"])
+            c3.metric("Issues", counts["error"] + counts["unconfigured"])
+
+    with cache_tab:
+        _render_cache_tab()
