@@ -9,10 +9,14 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pandas as pd
 
-from components.sidebar import (
-    _load_config_into_session_state,
-    _path_input,
-    _render_plugin_config,
+from components.plugin_config import (
+    load_config_into_session_state as _load_config_into_session_state,
+)
+from components.plugin_config import (
+    path_input as _path_input,
+)
+from components.plugin_config import (
+    render_plugin_config_fields as _render_plugin_config,
 )
 from core.local_settings import LocalSettings
 from pages.insights import render_insights_and_narrative
@@ -35,7 +39,7 @@ class TestPathInput(unittest.TestCase):
         col2.button.return_value = False
         return col1, col2
 
-    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("components.plugin_config._TKINTER_AVAILABLE", True)
     @patch("streamlit.columns")
     @patch("streamlit.button", return_value=False)
     @patch("streamlit.session_state", {})
@@ -48,7 +52,7 @@ class TestPathInput(unittest.TestCase):
         )
         self.assertEqual(result, "/some/default")
 
-    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("components.plugin_config._TKINTER_AVAILABLE", True)
     @patch("streamlit.columns")
     @patch("streamlit.button", return_value=False)
     def test_path_input_returns_existing_session_state(
@@ -61,7 +65,7 @@ class TestPathInput(unittest.TestCase):
             )
         self.assertEqual(result, "/existing/path")
 
-    @patch("components.sidebar._TKINTER_AVAILABLE", False)
+    @patch("components.plugin_config._TKINTER_AVAILABLE", False)
     @patch("streamlit.text_input")
     @patch("streamlit.session_state", {})
     def test_path_input_fallback_without_tkinter(self, mock_text_input: MagicMock) -> None:
@@ -71,7 +75,7 @@ class TestPathInput(unittest.TestCase):
         call_kwargs = mock_text_input.call_args
         self.assertEqual(call_kwargs[1]["key"], "nontk_key")
 
-    @patch("components.sidebar._TKINTER_AVAILABLE", True)
+    @patch("components.plugin_config._TKINTER_AVAILABLE", True)
     @patch("streamlit.columns")
     @patch("streamlit.button", return_value=False)
     @patch("streamlit.session_state", {})
@@ -85,117 +89,73 @@ class TestPathInput(unittest.TestCase):
         fields = [
             {"key": "data_path", "label": "CSV file", "type": "file_path"},
         ]
-        with patch("components.sidebar._settings") as mock_settings:
+        with patch("components.plugin_config.settings") as mock_settings:
             mock_settings.set_plugin_value = MagicMock()
             result = _render_plugin_config("myplugin", fields)
         self.assertIn("data_path", result)
 
 
-class TestSidebarExpansion(unittest.TestCase):
-    """Tests that plugin expanders auto-expand when a saved path no longer exists."""
+class TestSidebarDataLoading(unittest.TestCase):
+    """Tests that the sidebar loads data and sets session state correctly."""
 
-    def _make_sidebar_mocks(
-        self, mock_columns: MagicMock, mock_button: MagicMock
-    ) -> tuple[MagicMock, MagicMock]:
-        col1, col2 = MagicMock(), MagicMock()
-        mock_columns.return_value = [col1, col2]
-        mock_button.return_value = False
-        col2.button.return_value = False
-        return col1, col2
-
-    @patch("components.sidebar._TKINTER_AVAILABLE", True)
-    @patch("streamlit.columns")
-    @patch("streamlit.button", return_value=False)
-    @patch("streamlit.warning")
-    def test_expander_opens_and_warns_when_path_missing(
-        self, mock_warning: MagicMock, mock_button: MagicMock, mock_columns: MagicMock
-    ) -> None:
-        """When session state holds a nonexistent path, the expander is expanded and a warning shown."""
-        self._make_sidebar_mocks(mock_columns, mock_button)
-        expander_ctx = MagicMock()
-        expander_ctx.__enter__ = MagicMock(return_value=expander_ctx)
-        expander_ctx.__exit__ = MagicMock(return_value=False)
-
-        session = {"lastfm_data_path": "/nonexistent/tracks.csv"}
+    def test_render_sidebar_sets_df_none_when_no_file_path(self) -> None:
+        """render_sidebar sets df=None when no Last.fm file is configured."""
+        plugin_cls = MagicMock(return_value=MagicMock())
+        plugin_cls.return_value.get_config_fields.return_value = [
+            {"key": "data_path", "label": "CSV", "type": "file_path"}
+        ]
+        session: dict = {}
         with (
             patch("streamlit.session_state", session),
-            patch("components.sidebar._settings") as mock_settings,
-            patch("components.sidebar.REGISTRY", {"lastfm": MagicMock()}),
+            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
             patch("components.sidebar.load_builtin_plugins"),
-            patch("components.sidebar._load_config_into_session_state"),
-            patch("streamlit.sidebar") as mock_sidebar,
-            patch("os.path.exists", return_value=False),
+            patch("components.sidebar.load_config_into_session_state"),
+            patch("components.sidebar.get_plugin_config_from_session", return_value={}),
+            patch("components.sidebar.os.path.exists", return_value=False),
         ):
-            mock_settings.get_all_plugin_configs.return_value = {}
-            plugin_instance = MagicMock()
-            plugin_instance.ICON = ":material/headphones:"
-            plugin_instance.DISPLAY_NAME = "Last.fm"
-            plugin_instance.get_config_fields.return_value = [
-                {"key": "data_path", "label": "CSV", "type": "file_path"}
-            ]
-            mock_sidebar.expander.return_value = expander_ctx
-            import components.sidebar as sidebar_mod
-
-            sidebar_mod.REGISTRY["lastfm"].return_value = plugin_instance
-
             from components.sidebar import render_sidebar
 
             render_sidebar()
 
-        # Expander must be called with expanded=True when path is missing
-        mock_sidebar.expander.assert_called_once()
-        _, kwargs = mock_sidebar.expander.call_args
-        self.assertTrue(kwargs.get("expanded"), "Expander should be expanded when path is missing")
-        mock_warning.assert_called_once()
+        self.assertIsNone(session.get("df"))
 
-    @patch("components.sidebar._TKINTER_AVAILABLE", True)
-    @patch("streamlit.columns")
-    @patch("streamlit.button", return_value=False)
-    @patch("streamlit.warning")
-    def test_expander_collapsed_and_no_warning_when_path_exists(
-        self, mock_warning: MagicMock, mock_button: MagicMock, mock_columns: MagicMock
-    ) -> None:
-        """When session state holds an existing path, the expander is collapsed and no warning shown."""
-        self._make_sidebar_mocks(mock_columns, mock_button)
-        expander_ctx = MagicMock()
-        expander_ctx.__enter__ = MagicMock(return_value=expander_ctx)
-        expander_ctx.__exit__ = MagicMock(return_value=False)
+    def test_render_sidebar_stores_cache_hit_status(self) -> None:
+        """render_sidebar sets _cache_status='hit' when cached data is found."""
+        import pandas as pd
 
-        session = {"lastfm_data_path": "/real/tracks.csv"}
+        cached_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
+
+        plugin_instance = MagicMock()
+        plugin_instance.get_config_fields.return_value = [
+            {"key": "data_path", "label": "CSV", "type": "file_path"}
+        ]
+        plugin_cls = MagicMock(return_value=plugin_instance)
+
+        session: dict = {"lastfm_data_path": "/some/file.csv"}
         with (
             patch("streamlit.session_state", session),
-            patch("components.sidebar._settings") as mock_settings,
-            patch("components.sidebar.REGISTRY", {"lastfm": MagicMock()}),
+            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
             patch("components.sidebar.load_builtin_plugins"),
-            patch("components.sidebar._load_config_into_session_state"),
-            patch("streamlit.sidebar") as mock_sidebar,
+            patch("components.sidebar.load_config_into_session_state"),
+            patch(
+                "components.sidebar.get_plugin_config_from_session",
+                return_value={"data_path": "/some/file.csv"},
+            ),
             patch("components.sidebar.os.path.exists", return_value=True),
-            patch("components.sidebar.get_cache_key", return_value="key"),
-            patch("components.sidebar.get_cached_data", return_value=None),
             patch("components.sidebar.load_assumptions", return_value={}),
-            patch("components.sidebar.load_listening_data", return_value=None),
+            patch("components.sidebar.get_cache_key", return_value="key"),
+            patch("components.sidebar.get_cached_data", return_value=cached_df),
+            patch("streamlit.sidebar") as mock_sidebar,
         ):
-            mock_settings.get_all_plugin_configs.return_value = {}
-            mock_sidebar.button.return_value = False
-            plugin_instance = MagicMock()
-            plugin_instance.ICON = ":material/headphones:"
-            plugin_instance.DISPLAY_NAME = "Last.fm"
-            plugin_instance.get_config_fields.return_value = [
-                {"key": "data_path", "label": "CSV", "type": "file_path"}
+            mock_sidebar.date_input.return_value = [
+                cached_df["date_text"].min().date(),
+                cached_df["date_text"].max().date(),
             ]
-            mock_sidebar.expander.return_value = expander_ctx
-            import components.sidebar as sidebar_mod
-
-            sidebar_mod.REGISTRY["lastfm"].return_value = plugin_instance
-
             from components.sidebar import render_sidebar
 
             render_sidebar()
 
-        mock_sidebar.expander.assert_called_once()
-        _, kwargs = mock_sidebar.expander.call_args
-        self.assertFalse(kwargs.get("expanded"), "Expander should be collapsed when path exists")
-        mock_warning.assert_not_called()
+        self.assertEqual(session.get("_cache_status"), "hit")
 
 
 class TestConfigPersistence(unittest.TestCase):
@@ -210,7 +170,7 @@ class TestConfigPersistence(unittest.TestCase):
     def test_load_config_hydrates_session_state(self) -> None:
         mock_settings = self._make_settings({"lastfm": {"data_path": "/hydrated/path"}})
         session: dict[str, object] = {}
-        with patch("components.sidebar._settings", mock_settings):
+        with patch("components.plugin_config.settings", mock_settings):
             with patch("streamlit.session_state", session):
                 _load_config_into_session_state()
         self.assertEqual(session.get("lastfm_data_path"), "/hydrated/path")
@@ -218,19 +178,20 @@ class TestConfigPersistence(unittest.TestCase):
     def test_load_config_does_not_overwrite_existing_session_state(self) -> None:
         mock_settings = self._make_settings({"lastfm": {"data_path": "/from/disk"}})
         session: dict[str, object] = {"lastfm_data_path": "/already/set"}
-        with patch("components.sidebar._settings", mock_settings):
+        with patch("components.plugin_config.settings", mock_settings):
             with patch("streamlit.session_state", session):
                 _load_config_into_session_state()
         self.assertEqual(session["lastfm_data_path"], "/already/set")
 
-    def test_load_config_runs_only_once_per_session(self) -> None:
-        mock_settings = self._make_settings({"lastfm": {"data_path": "/once"}})
-        session: dict[str, object] = {"_autobio_config_loaded": True}
-        with patch("components.sidebar._settings", mock_settings):
+    def test_load_config_restores_cleared_widget_state(self) -> None:
+        # Simulates Streamlit clearing widget-bound keys during page navigation.
+        # On return to the page the key is absent, so load_config should restore it.
+        mock_settings = self._make_settings({"lastfm": {"data_path": "/saved/path"}})
+        session: dict[str, object] = {}  # key absent — as if Streamlit cleared it
+        with patch("components.plugin_config.settings", mock_settings):
             with patch("streamlit.session_state", session):
                 _load_config_into_session_state()
-        # Key must NOT be loaded because config was already marked loaded.
-        self.assertNotIn("lastfm_data_path", session)
+        self.assertEqual(session.get("lastfm_data_path"), "/saved/path")
 
     def test_load_config_hydrates_multiple_plugins(self) -> None:
         mock_settings = self._make_settings(
@@ -240,7 +201,7 @@ class TestConfigPersistence(unittest.TestCase):
             }
         )
         session: dict[str, object] = {}
-        with patch("components.sidebar._settings", mock_settings):
+        with patch("components.plugin_config.settings", mock_settings):
             with patch("streamlit.session_state", session):
                 _load_config_into_session_state()
         self.assertEqual(session.get("lastfm_data_path"), "/tracks.csv")
@@ -400,7 +361,7 @@ class TestVisualize(unittest.TestCase):
         mock_pg = MagicMock()
         mock_nav.return_value = mock_pg
 
-        with patch("visualize.render_sidebar"):
+        with patch("visualize.render_sidebar"), patch("visualize.load_builtin_plugins"):
             main()
 
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")

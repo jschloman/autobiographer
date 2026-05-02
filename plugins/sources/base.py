@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -12,6 +14,36 @@ _REQUIRED_COLUMNS: dict[str, list[str]] = {
     "what-when": ["timestamp", "label", "sublabel", "category", "source_id"],
     "where-when": ["timestamp", "lat", "lng", "place_name", "place_type", "source_id"],
 }
+
+
+def _count_records_at_path(path: str) -> int | None:
+    """Return a record count for a file or directory.
+
+    CSV → row count; JSON file → top-level list length; directory → total
+    items across all .json files in the directory.  Returns None on any error.
+    """
+    try:
+        if os.path.isdir(path):
+            import json
+
+            total = 0
+            for fname in os.listdir(path):
+                if fname.lower().endswith(".json"):
+                    with open(os.path.join(path, fname)) as f:
+                        data = json.load(f)
+                    if isinstance(data, list):
+                        total += len(data)
+            return total or None
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".csv":
+            return len(pd.read_csv(path))
+        import json
+
+        with open(path) as f:
+            data = json.load(f)
+        return len(data) if isinstance(data, list) else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def validate_schema(df: pd.DataFrame, plugin_type: str) -> None:
@@ -170,6 +202,106 @@ class SourcePlugin(ABC):
             "Please refer to the source's documentation for export options, "
             "then point the plugin's config field at the downloaded file."
         )
+
+    def get_health_status(
+        self, config: dict[str, Any], history: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Return health status derived from the current config and fetch history.
+
+        Status values:
+            ``"healthy"``      — data file exists and is not stale.
+            ``"stale"``        — fetchable plugin whose last fetch exceeds the
+                                 staleness threshold (default 24 h, overridable
+                                 via ``AUTOBIO_STALE_THRESHOLD_HOURS``).
+            ``"error"``        — configured path no longer exists on disk.
+            ``"unconfigured"`` — no primary config value has been set yet.
+
+        Args:
+            config: Dict of field_key → value from the plugin's config fields.
+            history: Fetch history list from ``LocalSettings.get_fetch_history()``.
+
+        Returns:
+            Dict with keys ``status``, ``record_count`` (int or None),
+            ``last_fetch`` (ISO string or None), ``data_path`` (str or None).
+        """
+        fields = self.get_config_fields()
+        primary_key = fields[0]["key"] if fields else None
+        data_path = config.get(primary_key, "").strip() if primary_key else ""
+
+        def _result(status: str, rc: int | None = None, lf: str | None = None) -> dict[str, Any]:
+            return {"status": status, "record_count": rc, "last_fetch": lf, "data_path": data_path}
+
+        if not data_path:
+            return {
+                "status": "unconfigured",
+                "record_count": None,
+                "last_fetch": None,
+                "data_path": None,
+            }
+
+        if not os.path.exists(data_path):
+            return _result("error")
+
+        # Count records directly from the file/directory — history may be absent
+        # for non-fetchable plugins or on first run.
+        record_count: int | None = _count_records_at_path(data_path)
+        last_fetch: str | None = None
+        if history:
+            last_fetch = history[0].get("timestamp")
+
+        if not self.FETCHABLE:
+            # Use the file/directory creation time as a proxy for when the data
+            # was last obtained.  os.path.getctime() returns creation time on
+            # Windows and inode-change time on POSIX (closest available proxy).
+            if not last_fetch:
+                try:
+                    ctime = os.path.getctime(data_path)
+                    last_fetch = datetime.fromtimestamp(ctime, tz=timezone.utc).isoformat()
+                except OSError:
+                    pass
+            return _result("healthy", record_count, last_fetch)
+
+        stale_seconds = int(os.getenv("AUTOBIO_STALE_THRESHOLD_HOURS", "24")) * 3600
+        now = datetime.now(tz=timezone.utc)
+
+        if last_fetch:
+            try:
+                last_dt = datetime.fromisoformat(last_fetch)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                elapsed = (now - last_dt).total_seconds()
+                status = "stale" if elapsed > stale_seconds else "healthy"
+            except ValueError:
+                status = "healthy"
+        else:
+            # No history — fall back to file mtime for staleness detection.
+            try:
+                mtime = os.path.getmtime(data_path)
+                last_mtime = datetime.fromtimestamp(mtime, tz=timezone.utc)
+                last_fetch = last_mtime.isoformat()
+                elapsed = (now - last_mtime).total_seconds()
+                status = "stale" if elapsed > stale_seconds else "healthy"
+            except OSError:
+                status = "healthy"
+
+        return _result(status, record_count, last_fetch)
+
+    def get_versioned_output_path(self) -> str:
+        """Return a timestamped file path for a new fetch snapshot.
+
+        Derives the base name and extension from ``get_default_output_path()``,
+        inserting an ISO timestamp before the extension. Falls back to
+        ``data/{plugin_id}/{plugin_id}_{ts}.csv`` when no default is available.
+
+        Returns:
+            Path string with format ``<base>_<YYYY-MM-DDTHHMMSS><ext>``.
+        """
+        ts = datetime.now().strftime("%Y-%m-%dT%H%M%S")
+        default = self.get_default_output_path()
+        if default:
+            base, ext = os.path.splitext(default)
+            return f"{base}_{ts}{ext or '.csv'}"
+        return f"data/{self.PLUGIN_ID}/{self.PLUGIN_ID}_{ts}.csv"
 
     def get_schema(self) -> dict[str, str]:
         """Return column name → description metadata for this plugin.

@@ -11,23 +11,27 @@ Run with::
 
 from __future__ import annotations
 
+from functools import partial
+
 import streamlit as st
 from dotenv import load_dotenv
 
 from components.sidebar import render_sidebar
 from pages.beer import render_beer
 from pages.culture import render_culture
+from pages.data_sources import render_data_sources, render_plugin_page
 from pages.fitness import render_fitness
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
 from pages.music import render_music, render_timeline_analysis  # noqa: F401
 from pages.overview import render_overview, render_top_charts  # noqa: F401
 from pages.places import render_places, render_spatial_analysis  # noqa: F401
+from plugins.sources import REGISTRY, load_builtin_plugins
 
 load_dotenv()
 
 _SIDEBAR_CSS = """
 <style>
-/* ── Data Sources section header ──────────────────────────────────────────
+/* ── Section headers ──────────────────────────────────────────────────────
    Matches the st.navigation group-label style: small, uppercase, muted.    */
 .autobio-section-header {
     font-size: 0.75rem;
@@ -39,32 +43,6 @@ _SIDEBAR_CSS = """
     padding-left: 0.5rem;
     line-height: 1.5;
 }
-
-/* ── Plugin expanders ─────────────────────────────────────────────────────
-   Strip the bordered-box styling so each plugin reads as a flat list item
-   (matching the visual weight of "Listening" / "Check-ins" nav items).     */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] > details {
-    border: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
-}
-
-/* Summary row (collapsed toggle) — same size and padding as a nav item */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {
-    font-size: 0.875rem;
-    font-weight: 400;
-    padding: 0.35rem 0.6rem;
-    border-radius: 0.4rem;
-}
-
-section[data-testid="stSidebar"] div[data-testid="stExpander"] summary:hover {
-    background-color: rgba(255, 255, 255, 0.07);
-}
-
-/* Indent the expanded content slightly, like a nav sub-section */
-section[data-testid="stSidebar"] div[data-testid="stExpander"] details > div {
-    padding-left: 0.75rem;
-}
 </style>
 """
 
@@ -74,7 +52,22 @@ def main() -> None:
     st.set_page_config(page_title="Autobiographer", layout="wide")
     st.markdown(_SIDEBAR_CSS, unsafe_allow_html=True)
 
-    render_sidebar()
+    # Populate REGISTRY before building nav so plugin pages can be listed.
+    load_builtin_plugins()
+
+    sources_pages = [
+        st.Page(render_data_sources, title="Data Sources", icon=":material/database:"),
+    ]
+    for plugin_id, plugin_cls in REGISTRY.items():
+        plugin = plugin_cls()
+        sources_pages.append(
+            st.Page(
+                partial(render_plugin_page, plugin_id),
+                title=plugin.DISPLAY_NAME,
+                icon=plugin.ICON,
+                url_path=plugin_id,
+            )
+        )
 
     pg = st.navigation(
         {
@@ -95,8 +88,13 @@ def main() -> None:
                 st.Page(render_culture, title="Films & Books", icon=":material/local_library:"),
                 st.Page(render_beer, title="Beer", icon=":material/sports_bar:"),
             ],
+            "Sources": sources_pages,
         }
     )
+
+    # render_sidebar after st.navigation so it appears below the nav list.
+    render_sidebar()
+
     pg.run()
 
 

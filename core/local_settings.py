@@ -101,6 +101,43 @@ class LocalSettings:
         plugin_cfg[field_key] = value
         self._save()
 
+    # ── Fetch history helpers ─────────────────────────────────────────────────
+
+    _MAX_HISTORY = 20
+
+    def add_fetch_history(
+        self, plugin_id: str, timestamp: str, record_count: int, file_path: str
+    ) -> None:
+        """Prepend a fetch record to the plugin's history list.
+
+        Keeps at most ``_MAX_HISTORY`` entries, newest first.
+
+        Args:
+            plugin_id: Plugin identifier (e.g. ``"lastfm"``).
+            timestamp: ISO-format timestamp string for the fetch.
+            record_count: Number of records in the fetched file.
+            file_path: Path where the versioned snapshot was saved.
+        """
+        plugins: dict[str, Any] = self._data.setdefault("plugins", {})
+        plugin_cfg: dict[str, Any] = plugins.setdefault(plugin_id, {})
+        history: list[dict[str, Any]] = plugin_cfg.setdefault("fetch_history", [])
+        entry = {"timestamp": timestamp, "record_count": record_count, "file_path": file_path}
+        history.insert(0, entry)
+        plugin_cfg["fetch_history"] = history[: self._MAX_HISTORY]
+        self._save()
+
+    def get_fetch_history(self, plugin_id: str) -> list[dict[str, Any]]:
+        """Return the fetch history list for a plugin, newest first.
+
+        Args:
+            plugin_id: Plugin identifier (e.g. ``"lastfm"``).
+
+        Returns:
+            List of ``{timestamp, record_count, file_path}`` dicts. Empty if none.
+        """
+        raw = self.get_plugin_config(plugin_id).get("fetch_history", [])
+        return raw if isinstance(raw, list) else []
+
     # ── General key/value helpers ─────────────────────────────────────────────
 
     def get(self, key: str, default: Any = None) -> Any:
