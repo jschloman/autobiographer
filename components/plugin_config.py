@@ -82,12 +82,8 @@ def path_input(
         value = str(st.session_state.pop(pending_key))
         st.session_state[session_key] = value
         on_persist(value)
-    elif not st.session_state.get(session_key):
-        # Restore from default (disk value) if absent or blank.  Blank can
-        # occur when Streamlit clears widget-bound keys on page navigation
-        # before load_config_into_session_state() has a chance to re-set them.
-        if default:
-            st.session_state[session_key] = default
+    elif session_key not in st.session_state:
+        st.session_state[session_key] = default
 
     def _on_change() -> None:
         on_persist(str(st.session_state.get(session_key, "")))

@@ -181,11 +181,16 @@ def render_plugin_page(plugin_id: str) -> None:
     Called by ``st.Page`` entries in ``visualize.py`` — one page per plugin
     under the Sources nav group.
 
+    Streamlit widgets read their display value from the session state snapshot
+    taken at the *start* of each script run, not from values set *during* that
+    run.  When page navigation clears widget-bound keys, we must hydrate
+    session state and trigger one extra rerun so the widgets in the following
+    run see the correct values.
+
     Args:
         plugin_id: The plugin's PLUGIN_ID string (registry key).
     """
     load_builtin_plugins()
-    load_config_into_session_state()
 
     plugin_cls = REGISTRY.get(plugin_id)
     if plugin_cls is None:
@@ -193,6 +198,23 @@ def render_plugin_page(plugin_id: str) -> None:
         return
 
     plugin = plugin_cls()
+    fields = plugin.get_config_fields()
+
+    # Check BEFORE hydration whether any config field is blank in session state
+    # but has a saved value on disk.
+    saved_cfg = settings.get_plugin_config(plugin_id)
+    needs_rerun = any(
+        saved_cfg.get(f["key"]) and not st.session_state.get(f"{plugin_id}_{f['key']}")
+        for f in fields
+    )
+
+    load_config_into_session_state()
+
+    if needs_rerun:
+        # Values were just written into session state this run; rerun so the
+        # next script execution's widget snapshot includes them.
+        st.rerun()
+
     st.title(plugin.DISPLAY_NAME)
     _render_plugin_tab(plugin_id, plugin)
 
