@@ -18,6 +18,7 @@ from components.plugin_config import (
     settings,
 )
 from plugins.sources import REGISTRY, load_builtin_plugins
+from plugins.sources.base import _count_records_at_path
 
 _STATUS_META: dict[str, tuple[str, str]] = {
     "healthy": ("✅", "Healthy"),
@@ -25,23 +26,6 @@ _STATUS_META: dict[str, tuple[str, str]] = {
     "error": ("❌", "Error"),
     "unconfigured": ("◻️", "Not configured"),
 }
-
-
-def _count_records(file_path: str) -> int | None:
-    """Return the number of data rows in a CSV or top-level items in a JSON list."""
-    try:
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext == ".csv":
-            import pandas as pd
-
-            return len(pd.read_csv(file_path))
-        import json
-
-        with open(file_path) as f:
-            data = json.load(f)
-        return len(data) if isinstance(data, list) else None
-    except Exception:  # noqa: BLE001
-        return None
 
 
 def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
@@ -138,7 +122,7 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
                 os.makedirs(parent, exist_ok=True)
             plugin.fetch(output_path=versioned_path, progress_callback=_on_progress)
 
-            record_count = _count_records(versioned_path) or 0
+            record_count = _count_records_at_path(versioned_path) or 0
             ts = datetime.now(tz=timezone.utc).isoformat()
             settings.add_fetch_history(plugin_id, ts, record_count, versioned_path)
 

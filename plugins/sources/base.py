@@ -16,6 +16,36 @@ _REQUIRED_COLUMNS: dict[str, list[str]] = {
 }
 
 
+def _count_records_at_path(path: str) -> int | None:
+    """Return a record count for a file or directory.
+
+    CSV → row count; JSON file → top-level list length; directory → total
+    items across all .json files in the directory.  Returns None on any error.
+    """
+    try:
+        if os.path.isdir(path):
+            import json
+
+            total = 0
+            for fname in os.listdir(path):
+                if fname.lower().endswith(".json"):
+                    with open(os.path.join(path, fname)) as f:
+                        data = json.load(f)
+                    if isinstance(data, list):
+                        total += len(data)
+            return total or None
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".csv":
+            return len(pd.read_csv(path))
+        import json
+
+        with open(path) as f:
+            data = json.load(f)
+        return len(data) if isinstance(data, list) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def validate_schema(df: pd.DataFrame, plugin_type: str) -> None:
     """Raise ValueError if df is missing required columns for plugin_type.
 
@@ -212,14 +242,23 @@ class SourcePlugin(ABC):
         if not os.path.exists(data_path):
             return _result("error")
 
-        record_count: int | None = None
+        # Count records directly from the file/directory — history may be absent
+        # for non-fetchable plugins or on first run.
+        record_count: int | None = _count_records_at_path(data_path)
         last_fetch: str | None = None
         if history:
-            latest = history[0]
-            last_fetch = latest.get("timestamp")
-            record_count = latest.get("record_count")
+            last_fetch = history[0].get("timestamp")
 
         if not self.FETCHABLE:
+            # Use the file/directory creation time as a proxy for when the data
+            # was last obtained.  os.path.getctime() returns creation time on
+            # Windows and inode-change time on POSIX (closest available proxy).
+            if not last_fetch:
+                try:
+                    ctime = os.path.getctime(data_path)
+                    last_fetch = datetime.fromtimestamp(ctime, tz=timezone.utc).isoformat()
+                except OSError:
+                    pass
             return _result("healthy", record_count, last_fetch)
 
         stale_seconds = int(os.getenv("AUTOBIO_STALE_THRESHOLD_HOURS", "24")) * 3600

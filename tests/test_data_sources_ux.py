@@ -136,6 +136,27 @@ class TestGetHealthStatus(unittest.TestCase):
         finally:
             os.unlink(tmp_path)
 
+    def test_record_count_read_from_csv_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
+            f.write("artist,track\nRadiohead,Karma Police\nPortishead,Sour Times\n")
+            tmp_path = f.name
+        try:
+            health = self.lastfm.get_health_status({"data_path": tmp_path}, [])
+            self.assertEqual(health["record_count"], 2)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_non_fetchable_last_fetch_from_file_ctime(self):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            f.write(b"[]")
+            tmp_path = f.name
+        try:
+            health = self.swarm.get_health_status({"swarm_dir": tmp_path}, [])
+            # last_fetch should be set from file ctime, not None
+            self.assertIsNotNone(health["last_fetch"])
+        finally:
+            os.unlink(tmp_path)
+
     def test_health_uses_file_mtime_when_no_history(self):
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
             tmp_path = f.name
