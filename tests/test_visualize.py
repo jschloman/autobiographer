@@ -198,14 +198,15 @@ class TestConfigPersistence(unittest.TestCase):
                 _load_config_into_session_state()
         self.assertEqual(session["lastfm_data_path"], "/already/set")
 
-    def test_load_config_runs_only_once_per_session(self) -> None:
-        mock_settings = self._make_settings({"lastfm": {"data_path": "/once"}})
-        session: dict[str, object] = {"_autobio_config_loaded": True}
+    def test_load_config_restores_cleared_widget_state(self) -> None:
+        # Simulates Streamlit clearing widget-bound keys during page navigation.
+        # On return to the page the key is absent, so load_config should restore it.
+        mock_settings = self._make_settings({"lastfm": {"data_path": "/saved/path"}})
+        session: dict[str, object] = {}  # key absent — as if Streamlit cleared it
         with patch("components.plugin_config.settings", mock_settings):
             with patch("streamlit.session_state", session):
                 _load_config_into_session_state()
-        # Key must NOT be loaded because config was already marked loaded.
-        self.assertNotIn("lastfm_data_path", session)
+        self.assertEqual(session.get("lastfm_data_path"), "/saved/path")
 
     def test_load_config_hydrates_multiple_plugins(self) -> None:
         mock_settings = self._make_settings(

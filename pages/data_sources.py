@@ -13,7 +13,6 @@ from typing import Any
 import streamlit as st
 
 from components.plugin_config import (
-    get_plugin_config_from_session,
     load_config_into_session_state,
     render_plugin_config_fields,
     settings,
@@ -45,28 +44,26 @@ def _count_records(file_path: str) -> int | None:
         return None
 
 
-def _render_plugin_tab(plugin_id: str, plugin: Any, health: dict[str, Any]) -> None:
-    """Render the full management UI for one plugin inside its tab.
+def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
+    """Render the full management UI for one plugin and return its computed health.
+
+    Health is computed *after* ``render_plugin_config_fields`` runs so that the
+    browse-button pending-key is processed before the status card is filled in.
+    An ``st.empty()`` placeholder keeps Status visually at the top of the tab
+    even though it is filled after Configuration is rendered.
 
     Args:
         plugin_id: Plugin identifier string.
         plugin: Instantiated SourcePlugin.
-        health: Health dict from ``plugin.get_health_status()``.
+
+    Returns:
+        Health dict from ``plugin.get_health_status()``.
     """
-    icon, label = _STATUS_META.get(health["status"], ("◻️", health["status"]))
-
-    # ── Status ──────────────────────────────────────────────────────────────
-    st.subheader("Status")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Health", f"{icon} {label}")
-    rc = health["record_count"]
-    c2.metric("Records", f"{rc:,}" if isinstance(rc, int) else "—")
-    last = health.get("last_fetch") or ""
-    c3.metric("Last Fetch", last[:10] if last else "—")
-
-    st.divider()
+    # Reserve a slot at the top — filled after config fields process any pending keys.
+    status_ph = st.empty()
 
     # ── Configuration ────────────────────────────────────────────────────────
+    st.divider()
     st.subheader("Configuration")
     fields = plugin.get_config_fields()
     config = render_plugin_config_fields(plugin_id, fields)
@@ -79,6 +76,22 @@ def _render_plugin_tab(plugin_id: str, plugin: Any, health: dict[str, Any]) -> N
         if primary_val and is_path_field and not os.path.exists(primary_val):
             st.warning("Configured path no longer exists — please select a new location.")
             primary_path_missing = True
+
+    # Health is accurate now because render_plugin_config_fields has processed
+    # any pending browse-button result into session state.
+    history = settings.get_fetch_history(plugin_id)
+    health: dict[str, Any] = plugin.get_health_status(config, history)
+
+    # ── Status (fills the placeholder at the top) ────────────────────────────
+    with status_ph.container():
+        st.subheader("Status")
+        icon, label = _STATUS_META.get(health["status"], ("◻️", health["status"]))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Health", f"{icon} {label}")
+        rc = health["record_count"]
+        c2.metric("Records", f"{rc:,}" if isinstance(rc, int) else "—")
+        last = health.get("last_fetch") or ""
+        c3.metric("Last Fetch", last[:10] if last else "—")
 
     st.divider()
 
@@ -113,12 +126,12 @@ def _render_plugin_tab(plugin_id: str, plugin: Any, health: dict[str, Any]) -> N
     # Execute pending fetch after button block so progress renders correctly.
     if pending_fetch is not None:
         (versioned_path,) = pending_fetch
-        status_ph = st.empty()
+        fetch_status_ph = st.empty()
 
         def _on_progress(page: int, total: int) -> None:
-            status_ph.info(f"Fetching page {page} of {total}…")
+            fetch_status_ph.info(f"Fetching page {page} of {total}…")
 
-        status_ph.info("Starting fetch…")
+        fetch_status_ph.info("Starting fetch…")
         try:
             parent = os.path.dirname(versioned_path)
             if parent:
@@ -136,12 +149,12 @@ def _render_plugin_tab(plugin_id: str, plugin: Any, health: dict[str, Any]) -> N
                 st.session_state[session_key] = versioned_path
                 settings.set_plugin_value(plugin_id, primary_key, versioned_path)
 
-            status_ph.success(
+            fetch_status_ph.success(
                 f"Fetch complete — {record_count:,} records saved to `{versioned_path}`"
             )
             st.rerun()
         except Exception as exc:  # noqa: BLE001
-            status_ph.error(f"Fetch failed: {exc}")
+            fetch_status_ph.error(f"Fetch failed: {exc}")
 
     st.divider()
 
@@ -172,6 +185,8 @@ def _render_plugin_tab(plugin_id: str, plugin: Any, health: dict[str, Any]) -> N
                     settings.set_plugin_value(plugin_id, primary_key, fp)
                     st.rerun()
 
+    return health
+
 
 def render_data_sources() -> None:
     """Render the Data Sources management page with per-plugin tabs."""
@@ -183,27 +198,27 @@ def render_data_sources() -> None:
 
     plugins_list = [(pid, cls()) for pid, cls in REGISTRY.items()]
 
-    # Compute health for the summary row before rendering tabs.
-    all_health: list[dict[str, Any]] = []
-    for plugin_id, plugin in plugins_list:
-        config = get_plugin_config_from_session(plugin_id, plugin.get_config_fields())
-        history = settings.get_fetch_history(plugin_id)
-        all_health.append(plugin.get_health_status(config, history))
-
-    counts: dict[str, int] = {"healthy": 0, "stale": 0, "error": 0, "unconfigured": 0}
-    for h in all_health:
-        counts[h["status"]] = counts.get(h["status"], 0) + 1
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Healthy", counts["healthy"])
-    c2.metric("Stale", counts["stale"])
-    c3.metric("Issues", counts["error"] + counts["unconfigured"])
+    # Summary metrics slot — filled after tabs so health reflects current config.
+    summary_ph = st.empty()
 
     st.divider()
 
     tab_labels = [plugin.DISPLAY_NAME for _, plugin in plugins_list]
     tabs = st.tabs(tab_labels)
 
-    for tab, (plugin_id, plugin), health in zip(tabs, plugins_list, all_health):
+    all_health: list[dict[str, Any]] = []
+    for tab, (plugin_id, plugin) in zip(tabs, plugins_list):
         with tab:
-            _render_plugin_tab(plugin_id, plugin, health)
+            health = _render_plugin_tab(plugin_id, plugin)
+            all_health.append(health)
+
+    # Fill summary now that all tabs have computed accurate health.
+    counts: dict[str, int] = {"healthy": 0, "stale": 0, "error": 0, "unconfigured": 0}
+    for h in all_health:
+        counts[h["status"]] = counts.get(h["status"], 0) + 1
+
+    with summary_ph.container():
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Healthy", counts["healthy"])
+        c2.metric("Stale", counts["stale"])
+        c3.metric("Issues", counts["error"] + counts["unconfigured"])

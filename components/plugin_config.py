@@ -20,21 +20,18 @@ try:
 except Exception:
     _TKINTER_AVAILABLE = False
 
-_CONFIG_LOADED_KEY = "_autobio_config_loaded"
-
 # Module-level singleton — reads local_settings.json once on first import.
 settings = LocalSettings()
 
 
 def load_config_into_session_state() -> None:
-    """Hydrate session state from local_settings.json once per browser session.
+    """Hydrate session state from local_settings.json.
 
-    Only runs on the first script execution in a new browser session. Skips
-    non-string values (e.g. the ``fetch_history`` list) so they are never
-    written into session state.
+    Called on every page render. Only sets keys that are absent from session
+    state, so in-session widget edits are never overwritten. Running on every
+    render ensures config values are restored from disk when Streamlit clears
+    widget-bound session state keys during page navigation.
     """
-    if st.session_state.get(_CONFIG_LOADED_KEY):
-        return
     for plugin_id, plugin_cfg in settings.get_all_plugin_configs().items():
         for field_key, value in plugin_cfg.items():
             if not isinstance(value, str):
@@ -42,7 +39,6 @@ def load_config_into_session_state() -> None:
             session_key = f"{plugin_id}_{field_key}"
             if session_key not in st.session_state:
                 st.session_state[session_key] = value
-    st.session_state[_CONFIG_LOADED_KEY] = True
 
 
 def path_input(

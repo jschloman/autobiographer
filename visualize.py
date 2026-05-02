@@ -75,8 +75,6 @@ def main() -> None:
     st.set_page_config(page_title="Autobiographer", layout="wide")
     st.markdown(_SIDEBAR_CSS, unsafe_allow_html=True)
 
-    render_sidebar()
-
     pg = st.navigation(
         {
             "Overview": [
@@ -101,6 +99,11 @@ def main() -> None:
             ],
         }
     )
+
+    # render_sidebar after st.navigation so health badges + cache controls
+    # appear below the navigation list in the sidebar, not above it.
+    render_sidebar()
+
     pg.run()
 
 
