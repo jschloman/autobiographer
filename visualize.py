@@ -65,6 +65,7 @@ def main() -> None:
                 partial(render_plugin_page, plugin_id),
                 title=plugin.DISPLAY_NAME,
                 icon=plugin.ICON,
+                url_path=plugin_id,
             )
         )
 
