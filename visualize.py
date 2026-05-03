@@ -32,12 +32,11 @@ load_dotenv()
 
 _GLOBAL_CSS = """
 <style>
-/* ── Chrome (target specific Streamlit testids, not the bare header tag
-   which also matches sidebar nav group labels) ────────────────────────────*/
+/* ── Chrome — hide unwanted UI without touching the sidebar toggle ─────────
+   Do NOT hide stHeader or stToolbar: they contain the collapsed-sidebar
+   expand button, and hiding them traps users with no way to reopen it.      */
 #MainMenu                          {visibility: hidden;}
 footer                             {visibility: hidden;}
-[data-testid="stHeader"]           {visibility: hidden;}
-[data-testid="stToolbar"]          {visibility: hidden;}
 [data-testid="stDecoration"]       {display: none;}
 [data-testid="stStatusWidget"]     {visibility: hidden;}
 
