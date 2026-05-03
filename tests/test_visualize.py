@@ -32,7 +32,7 @@ from pages.music import (
     render_plays_growth,
     render_quick_facts,
 )
-from pages.overview import render_top_charts
+from pages.overview import render_overview, render_top_charts
 from pages.places import render_spatial_analysis
 from visualize import main
 
@@ -376,6 +376,50 @@ class TestVisualize(unittest.TestCase):
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")
         mock_nav.assert_called_once()
         mock_pg.run.assert_called_once()
+
+    @patch("streamlit.info")
+    @patch("streamlit.markdown")
+    def test_render_overview_empty_state(self, mock_md: MagicMock, mock_info: MagicMock) -> None:
+        with patch("streamlit.session_state", {"df": None}):
+            render_overview()
+        mock_info.assert_called_once()
+
+    @patch("streamlit.header")
+    @patch("streamlit.radio")
+    @patch("streamlit.slider")
+    @patch("streamlit.columns")
+    @patch("streamlit.plotly_chart")
+    @patch("streamlit.metric")
+    @patch("streamlit.markdown")
+    @patch("pages.overview._HAS_METRIC_CARDS", False)
+    def test_render_overview_with_data(
+        self,
+        mock_md: MagicMock,
+        mock_metric: MagicMock,
+        mock_plotly: MagicMock,
+        mock_cols: MagicMock,
+        mock_slider: MagicMock,
+        mock_radio: MagicMock,
+        mock_header: MagicMock,
+    ) -> None:
+        mock_radio.return_value = "artist"
+        mock_slider.return_value = 10
+        col_mocks = [MagicMock(), MagicMock(), MagicMock(), MagicMock()]
+        mock_cols.side_effect = [col_mocks, [MagicMock(), MagicMock()]]
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=MagicMock())
+        ctx.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("streamlit.session_state", {"df": self.df}),
+            patch("streamlit.container", return_value=ctx),
+        ):
+            render_overview()
+
+        # st.metric is called on column objects, not directly on streamlit
+        any_metric_called = any(m.metric.called for m in col_mocks)
+        self.assertTrue(any_metric_called)
+        self.assertTrue(mock_md.called)
 
 
 class TestMusicHelpers(unittest.TestCase):

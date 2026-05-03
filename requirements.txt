@@ -3,6 +3,7 @@ requests
 pandas
 plotly
 streamlit
+streamlit-extras
 nbformat
 ipykernel
 pytest
