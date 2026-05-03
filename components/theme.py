@@ -151,7 +151,7 @@ def card_container() -> Iterator[None]:
     Usage::
 
         with card_container():
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     """
     with st.container(border=True):
         yield

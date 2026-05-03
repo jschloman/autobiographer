@@ -325,7 +325,7 @@ class TestVisualize(unittest.TestCase):
 
         mock_subheader.assert_called_with("All-Time Activity")
         self.assertEqual(mock_plotly.call_count, 2)
-        mock_plotly.assert_any_call(ANY, use_container_width=True)
+        mock_plotly.assert_any_call(ANY, width="stretch")
 
     @patch("streamlit.header")
     @patch("streamlit.subheader")

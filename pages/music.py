@@ -181,7 +181,7 @@ def render_daily_chart(filtered: pd.DataFrame) -> None:
     fig = px.bar(intensity, x="date", y="Plays", title="Daily Scrobbles")
     fig.update_traces(marker_color=TEAL)
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_listening_clock(filtered: pd.DataFrame) -> None:
@@ -205,7 +205,7 @@ def render_listening_clock(filtered: pd.DataFrame) -> None:
     fig.update_traces(marker_color=AMBER)
     fig.update_xaxes(tickmode="linear", tick0=0, dtick=2)
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_plays_growth(filtered: pd.DataFrame) -> None:
@@ -220,7 +220,7 @@ def render_plays_growth(filtered: pd.DataFrame) -> None:
     fig = px.area(cumulative, x="date", y="CumulativePlays", title="Plays Growth")
     fig.update_traces(line_color=TEAL, fillcolor="rgba(0,200,200,0.15)")
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_activity_over_time(df: pd.DataFrame) -> None:
@@ -235,13 +235,13 @@ def render_activity_over_time(df: pd.DataFrame) -> None:
     intensity = get_listening_intensity(df, freq_map[freq_label])
     fig = px.line(intensity, x="date", y="Plays", title=f"Plays per {freq_label}")
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     cumulative = get_cumulative_plays(df)
     fig2 = px.area(cumulative, x="date", y="CumulativePlays", title="All-Time Total Plays")
     fig2.update_traces(line_color=TEAL, fillcolor="rgba(0,200,200,0.15)")
     apply_dark_theme(fig2)
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 
 def render_music() -> None:
