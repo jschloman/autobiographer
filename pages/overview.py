@@ -109,14 +109,25 @@ def render_overview() -> None:
         ]
     )
 
-    # ── Swarm stats (optional right panel) ───────────────────────────────────
-    swarm_panel = ""
+    # ── Hero card — built as a flat joined string so the Markdown renderer
+    # never sees indented lines (4+ spaces = code block in CommonMark).  ─────
+    parts = [
+        '<div class="autobio-hero-card">',
+        '<div style="display:flex;justify-content:space-between;'
+        'align-items:center;flex-wrap:wrap;gap:1.5rem">',
+        "<div>",
+        f'<p style="font-size:48px;font-weight:700;color:#f0f4ff;'
+        f'margin:0;line-height:1">{total_scrobbles:,}</p>',
+        f'<p style="font-size:13px;color:{TEXT_DIM};margin:4px 0 0.75rem 0">Last.fm scrobbles</p>',
+        f'<div style="display:flex;gap:2rem;flex-wrap:wrap">{music_stats}</div>',
+        "</div>",
+    ]
+
     if swarm_df is not None and not swarm_df.empty:
         total_checkins = len(swarm_df)
         unique_venues = swarm_df["venue"].nunique() if "venue" in swarm_df.columns else 0
         unique_cities = swarm_df["city"].nunique() if "city" in swarm_df.columns else 0
         unique_countries = swarm_df["country"].nunique() if "country" in swarm_df.columns else 0
-
         swarm_stats = "".join(
             [
                 _stat_html(f"{unique_venues:,}", "venues", ACCENT_GREEN),
@@ -124,42 +135,24 @@ def render_overview() -> None:
                 _stat_html(f"{unique_countries:,}", "countries", ACCENT_YELLOW),
             ]
         )
-        swarm_panel = f"""
-            <div style="border-left:1px solid #2d3a52;padding-left:2.5rem;margin-left:1rem">
-                <p style="font-size:11px;font-weight:600;color:{TEXT_DIM};
-                           letter-spacing:0.08em;text-transform:uppercase;
-                           margin:0 0 0.75rem 0">Foursquare</p>
-                <div style="display:flex;gap:0;flex-direction:column;align-items:flex-start">
-                    <div style="display:flex;gap:0;align-items:baseline;margin-bottom:0.5rem">
-                        <p style="font-size:32px;font-weight:700;color:#f0f4ff;
-                                   margin:0;line-height:1">{total_checkins:,}</p>
-                        <p style="font-size:13px;color:{TEXT_DIM};margin:0 0 0 0.5rem">
-                            check-ins</p>
-                    </div>
-                    <div style="display:flex;gap:1.5rem;flex-wrap:wrap">{swarm_stats}</div>
-                </div>
-            </div>
-        """
+        parts += [
+            '<div style="border-left:1px solid #2d3a52;padding-left:2.5rem;margin-left:1rem">',
+            f'<p style="font-size:11px;font-weight:600;color:{TEXT_DIM};'
+            f"letter-spacing:0.08em;text-transform:uppercase;"
+            f'margin:0 0 0.75rem 0">Foursquare</p>',
+            '<div style="display:flex;flex-direction:column;align-items:flex-start;gap:0.5rem">',
+            '<div style="display:flex;align-items:baseline;gap:0.5rem">',
+            f'<p style="font-size:32px;font-weight:700;color:#f0f4ff;'
+            f'margin:0;line-height:1">{total_checkins:,}</p>',
+            f'<p style="font-size:13px;color:{TEXT_DIM};margin:0">check-ins</p>',
+            "</div>",
+            f'<div style="display:flex;gap:1.5rem;flex-wrap:wrap">{swarm_stats}</div>',
+            "</div>",
+            "</div>",
+        ]
 
-    # ── Hero card ─────────────────────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div class="autobio-hero-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;
-                        flex-wrap:wrap;gap:1.5rem">
-                <div>
-                    <p style="font-size:48px;font-weight:700;color:#f0f4ff;
-                               margin:0;line-height:1">{total_scrobbles:,}</p>
-                    <p style="font-size:13px;color:{TEXT_DIM};margin:4px 0 0.75rem 0">
-                        Last.fm scrobbles</p>
-                    <div style="display:flex;gap:2rem;flex-wrap:wrap">{music_stats}</div>
-                </div>
-                {swarm_panel}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    parts += ["</div>", "</div>"]
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
     # ── Top charts (card grid) ────────────────────────────────────────────────
     with card_container():
