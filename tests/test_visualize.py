@@ -20,7 +20,18 @@ from components.plugin_config import (
 )
 from core.local_settings import LocalSettings
 from pages.insights import render_insights_and_narrative
-from pages.music import render_timeline_analysis
+from pages.music import (
+    _filter_by_date,
+    _pct_delta,
+    _prev_period,
+    render_activity_over_time,
+    render_daily_chart,
+    render_entity_columns,
+    render_listening_clock,
+    render_music,
+    render_plays_growth,
+    render_quick_facts,
+)
 from pages.overview import render_top_charts
 from pages.places import render_spatial_analysis
 from visualize import main
@@ -299,24 +310,22 @@ class TestVisualize(unittest.TestCase):
         self.assertEqual(mock_plotly.call_count, 2)
         mock_plotly.assert_any_call(ANY, width="stretch")
 
-    @patch("streamlit.header")
     @patch("streamlit.selectbox")
     @patch("streamlit.plotly_chart")
     @patch("streamlit.subheader")
-    def test_render_timeline_analysis(
+    def test_render_activity_over_time(
         self,
         mock_subheader: MagicMock,
         mock_plotly: MagicMock,
         mock_selectbox: MagicMock,
-        mock_header: MagicMock,
     ) -> None:
         mock_selectbox.return_value = "Daily"
 
-        render_timeline_analysis(self.df)
+        render_activity_over_time(self.df)
 
-        mock_header.assert_called_with("Activity Over Time")
+        mock_subheader.assert_called_with("All-Time Activity")
         self.assertEqual(mock_plotly.call_count, 2)
-        mock_plotly.assert_any_call(ANY, width="stretch")
+        mock_plotly.assert_any_call(ANY, use_container_width=True)
 
     @patch("streamlit.header")
     @patch("streamlit.subheader")
@@ -367,6 +376,126 @@ class TestVisualize(unittest.TestCase):
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")
         mock_nav.assert_called_once()
         mock_pg.run.assert_called_once()
+
+
+class TestMusicHelpers(unittest.TestCase):
+    """Tests for pure helper functions in pages.music."""
+
+    def _make_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B", "A", "C"],
+                "album": ["X", "Y", "X", "Z"],
+                "track": ["t1", "t2", "t3", "t4"],
+                "timestamp": [1609459200, 1609545600, 1609632000, 1609718400],
+                "date_text": ["2021-01-01", "2021-01-02", "2021-01-03", "2021-01-04"],
+            }
+        )
+        df["date_text"] = pd.to_datetime(df["date_text"])
+        return df
+
+    def test_filter_by_date_inclusive(self) -> None:
+        import datetime
+
+        df = self._make_df()
+        result = _filter_by_date(df, datetime.date(2021, 1, 2), datetime.date(2021, 1, 3))
+        self.assertEqual(len(result), 2)
+
+    def test_filter_by_date_empty_range(self) -> None:
+        import datetime
+
+        df = self._make_df()
+        result = _filter_by_date(df, datetime.date(2020, 1, 1), datetime.date(2020, 1, 2))
+        self.assertTrue(result.empty)
+
+    def test_prev_period_same_duration(self) -> None:
+        import datetime
+
+        start = datetime.date(2021, 1, 8)
+        end = datetime.date(2021, 1, 14)
+        ps, pe = _prev_period(start, end)
+        self.assertEqual(pe, datetime.date(2021, 1, 7))
+        self.assertEqual(ps, datetime.date(2021, 1, 1))
+
+    def test_pct_delta_positive(self) -> None:
+        self.assertAlmostEqual(_pct_delta(120, 100), 20.0)
+
+    def test_pct_delta_negative(self) -> None:
+        self.assertAlmostEqual(_pct_delta(80, 100), -20.0)
+
+    def test_pct_delta_zero_previous(self) -> None:
+        self.assertIsNone(_pct_delta(10, 0))
+
+    @patch("streamlit.metric")
+    @patch("streamlit.columns")
+    def test_render_quick_facts_calls_metric(
+        self, mock_cols: MagicMock, mock_metric: MagicMock
+    ) -> None:
+        df = self._make_df()
+        mock_cols.return_value = [MagicMock()] * 4
+        render_quick_facts(df, pd.DataFrame())
+        self.assertTrue(mock_metric.called)
+
+    @patch("streamlit.markdown")
+    @patch("streamlit.metric")
+    @patch("streamlit.subheader")
+    @patch("streamlit.columns")
+    def test_render_entity_columns(
+        self,
+        mock_cols: MagicMock,
+        mock_subheader: MagicMock,
+        mock_metric: MagicMock,
+        mock_md: MagicMock,
+    ) -> None:
+        df = self._make_df()
+        ctx_mocks = [
+            MagicMock(
+                __enter__=MagicMock(return_value=MagicMock()),
+                __exit__=MagicMock(return_value=False),
+            )
+            for _ in range(3)
+        ]
+        mock_cols.return_value = ctx_mocks
+        render_entity_columns(df, df)
+        mock_cols.assert_called_once_with(3)
+
+    @patch("streamlit.plotly_chart")
+    def test_render_daily_chart(self, mock_plotly: MagicMock) -> None:
+        render_daily_chart(self._make_df())
+        mock_plotly.assert_called_once()
+
+    @patch("streamlit.plotly_chart")
+    def test_render_listening_clock(self, mock_plotly: MagicMock) -> None:
+        render_listening_clock(self._make_df())
+        mock_plotly.assert_called_once()
+
+    @patch("streamlit.plotly_chart")
+    def test_render_plays_growth(self, mock_plotly: MagicMock) -> None:
+        render_plays_growth(self._make_df())
+        mock_plotly.assert_called_once()
+
+    @patch("streamlit.plotly_chart")
+    def test_render_daily_chart_empty(self, mock_plotly: MagicMock) -> None:
+        render_daily_chart(pd.DataFrame())
+        mock_plotly.assert_not_called()
+
+    @patch("streamlit.plotly_chart")
+    def test_render_listening_clock_empty(self, mock_plotly: MagicMock) -> None:
+        render_listening_clock(pd.DataFrame())
+        mock_plotly.assert_not_called()
+
+    @patch("streamlit.plotly_chart")
+    def test_render_plays_growth_empty(self, mock_plotly: MagicMock) -> None:
+        render_plays_growth(pd.DataFrame())
+        mock_plotly.assert_not_called()
+
+    @patch("streamlit.info")
+    def test_render_music_empty_state(self, mock_info: MagicMock) -> None:
+        import streamlit as st
+
+        st.session_state["df"] = None
+        render_music()
+        mock_info.assert_called_once()
 
 
 if __name__ == "__main__":
