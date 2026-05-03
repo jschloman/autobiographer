@@ -32,10 +32,14 @@ load_dotenv()
 
 _GLOBAL_CSS = """
 <style>
-/* ── Chrome ───────────────────────────────────────────────────────────────*/
-#MainMenu {visibility: hidden;}
-footer    {visibility: hidden;}
-header    {visibility: hidden;}
+/* ── Chrome (target specific Streamlit testids, not the bare header tag
+   which also matches sidebar nav group labels) ────────────────────────────*/
+#MainMenu                          {visibility: hidden;}
+footer                             {visibility: hidden;}
+[data-testid="stHeader"]           {visibility: hidden;}
+[data-testid="stToolbar"]          {visibility: hidden;}
+[data-testid="stDecoration"]       {display: none;}
+[data-testid="stStatusWidget"]     {visibility: hidden;}
 
 /* ── Layout ───────────────────────────────────────────────────────────────*/
 .block-container {

@@ -56,9 +56,14 @@ def render_sidebar() -> None:
 
     if not file_path or not os.path.exists(file_path):
         st.session_state["df"] = None
+        st.session_state["swarm_df"] = None
         return
 
     assumptions = load_assumptions(assumptions_path)
+
+    swarm_df = (
+        load_swarm_data(swarm_dir) if swarm_dir and os.path.exists(swarm_dir) else pd.DataFrame()
+    )
 
     cache_key = get_cache_key(file_path, swarm_dir, assumptions_path)
     df: pd.DataFrame | None = get_cached_data(cache_key)
@@ -68,15 +73,12 @@ def render_sidebar() -> None:
         df = load_listening_data(file_path)
         if df is not None:
             with st.spinner("Adjusting timezones and geocoding…"):
-                swarm_df = (
-                    load_swarm_data(swarm_dir)
-                    if swarm_dir and os.path.exists(swarm_dir)
-                    else pd.DataFrame()
-                )
                 df = apply_swarm_offsets(df, swarm_df, assumptions)
             save_to_cache(df, cache_key)
     else:
         st.session_state["_cache_status"] = "hit"
+
+    st.session_state["swarm_df"] = swarm_df if not swarm_df.empty else None
 
     if df is not None:
         st.sidebar.markdown(
