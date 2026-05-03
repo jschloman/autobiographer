@@ -216,5 +216,98 @@ class TestRunFetch(unittest.TestCase):
         self.assertEqual(to_ts, expected_base + 86399)
 
 
+class TestRunList(unittest.TestCase):
+    """Tests for the _run_list CLI subcommand."""
+
+    def _make_fetchable_plugin(self) -> MagicMock:
+        plugin = MagicMock()
+        plugin.FETCHABLE = True
+        plugin.DISPLAY_NAME = "Auto Plugin"
+        plugin.PLUGIN_TYPE = "what-when"
+        plugin.get_fetch_env_vars.return_value = [
+            {"var": "AUTOBIO_AUTO_KEY", "description": "An API key"}
+        ]
+        plugin.get_manual_download_instructions.return_value = "Auto plugin instructions."
+        return plugin
+
+    def _make_manual_plugin(self) -> MagicMock:
+        plugin = MagicMock()
+        plugin.FETCHABLE = False
+        plugin.DISPLAY_NAME = "Manual Plugin"
+        plugin.PLUGIN_TYPE = "where-when"
+        plugin.get_fetch_env_vars.return_value = []
+        plugin.get_manual_download_instructions.return_value = "Export from the website."
+        return plugin
+
+    def test_empty_registry_prints_message(self):
+        from autobiographer import _run_list
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {}),
+            patch("builtins.print") as mock_print,
+        ):
+            _run_list()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("No plugins", printed)
+
+    def test_fetchable_plugin_shows_env_vars(self):
+        from autobiographer import _run_list
+
+        plugin = self._make_fetchable_plugin()
+        fake_cls = MagicMock(return_value=plugin)
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"autoplugin": fake_cls}),
+            patch("os.getenv", return_value=None),
+            patch("builtins.print") as mock_print,
+        ):
+            _run_list()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("AUTOBIO_AUTO_KEY", printed)
+        self.assertIn("fetch autoplugin", printed)
+
+    def test_manual_plugin_shows_instructions(self):
+        from autobiographer import _run_list
+
+        plugin = self._make_manual_plugin()
+        fake_cls = MagicMock(return_value=plugin)
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"manualplugin": fake_cls}),
+            patch("builtins.print") as mock_print,
+        ):
+            _run_list()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("Export from the website.", printed)
+
+    def test_configured_env_var_shows_check(self):
+        from autobiographer import _run_list
+
+        plugin = self._make_fetchable_plugin()
+        fake_cls = MagicMock(return_value=plugin)
+
+        def fake_getenv(var: str, default: str = "") -> str:
+            if var == "AUTOBIO_AUTO_KEY":
+                return "secret"
+            return default
+
+        with (
+            patch("plugins.sources.load_builtin_plugins"),
+            patch("plugins.sources.REGISTRY", {"autoplugin": fake_cls}),
+            patch("os.getenv", side_effect=fake_getenv),
+            patch("builtins.print") as mock_print,
+        ):
+            _run_list()
+
+        printed = " ".join(str(c) for c in mock_print.call_args_list)
+        self.assertIn("✓", printed)
+
+
 if __name__ == "__main__":
     unittest.main()

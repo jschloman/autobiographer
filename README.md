@@ -6,14 +6,14 @@
 
 <img src="assets/example%20screenshot%20map.png" style="width: 500">
 
-Autobiographer is a Python-based toolkit that allows you to fetch, store, and explore your personal music listening history (Last.fm) and location history (Foursquare/Swarm). It transforms your data into an interactive autobiographical experience, highlighting your top artists, listening patterns, milestones, and travel history.
+Autobiographer is a Python-based toolkit that lets you fetch, store, and explore your personal life data through a plugin system. Each plugin owns one data source — music listening (Last.fm), location check-ins (Foursquare/Swarm), and more — and exposes a unified fetch-and-display workflow. It transforms your data into an interactive autobiographical experience, highlighting your top artists, listening patterns, milestones, and travel history.
 
 
 <img src="assets/example%20screenshot%20stats.png" style="width: 500">
 
 ## Features
 
-- **Data Fetching**: Securely fetch your entire listening history using the Last.fm API.
+- **Plugin-Based Data Fetching**: Each source plugin handles its own fetch workflow. Plugins that support automatic retrieval (e.g. Last.fm) download data with one command; plugins that require a manual export (e.g. Foursquare/Swarm) print step-by-step instructions. Run `python autobiographer.py list` to see every plugin's status and required configuration.
 - **Interactive Dashboard**: A multi-tab Streamlit dashboard with:
     - **Overview**: Top Artists, Albums, and Tracks.
     - **Timeline**: Daily, Weekly, and Monthly listening activity with cumulative growth.
@@ -104,6 +104,15 @@ Get a Last.fm API key at: https://www.last.fm/api/account/create
 
 #### Fetch Your Data
 
+Start by listing available plugins to see what each one needs:
+
+```bash
+python autobiographer.py list
+```
+
+This prints every plugin with its fetch mode (auto or manual), required environment
+variables with a ✓/✗ status for each, and the exact command to run.
+
 The `fetch` command targets a specific plugin. Plugins that support automatic download
 will retrieve your data; plugins that require a manual export will print step-by-step
 instructions instead.
@@ -123,10 +132,10 @@ python autobiographer.py fetch lastfm --from-date 2024-01-01 --to-date 2024-12-3
 python autobiographer.py fetch lastfm --output data/my_tracks.csv
 ```
 
-If a plugin is not yet configured the command will list exactly which environment
+If a plugin is not yet configured the `fetch` command lists exactly which environment
 variables are missing and what each one is for.
 
-The app sidebar also exposes this directly: a **Fetch Latest Data** button appears for
+The app also exposes fetch directly: a **Fetch Latest Data** button appears for
 plugins that support automatic retrieval, and step-by-step manual instructions are
 shown for plugins that require a data export from the provider.
 
@@ -241,7 +250,7 @@ Additional utility scripts are available in the `tools/` directory:
 ## Project Structure
 
 ```
-autobiographer.py       # Data-fetching CLI (`fetch <plugin>`) + Last.fm API client
+autobiographer.py       # Data-fetching CLI (`list`, `fetch <plugin>`) + Last.fm API client
 visualize.py            # Streamlit dashboard (assembles views from plugins)
 export_html.py          # Static HTML export — single self-contained report file
 analysis_utils.py       # Shared data processing and caching logic

@@ -131,6 +131,38 @@ def _parse_date(date_str: str, label: str) -> Optional[int]:
         raise SystemExit(1) from exc
 
 
+def _run_list() -> None:
+    """Execute the ``list`` subcommand.
+
+    Prints every registered plugin with its display name, type, fetchability,
+    and the configuration it requires so users can discover what is available
+    and what they need to set up before running ``fetch``.
+    """
+    from plugins.sources import REGISTRY, load_builtin_plugins
+
+    load_builtin_plugins()
+
+    if not REGISTRY:
+        print("No plugins registered.")
+        return
+
+    for plugin_id in sorted(REGISTRY):
+        plugin = REGISTRY[plugin_id]()
+        fetch_label = "auto-fetch" if plugin.FETCHABLE else "manual export"
+        print(f"\n{plugin.DISPLAY_NAME} ({plugin_id})  [{plugin.PLUGIN_TYPE} · {fetch_label}]")
+
+        if plugin.FETCHABLE:
+            env_vars = plugin.get_fetch_env_vars()
+            if env_vars:
+                print("  Required environment variables:")
+                for v in env_vars:
+                    status = "✓" if os.getenv(v["var"]) else "✗ missing"
+                    print(f"    {v['var']}  —  {v['description']}  [{status}]")
+            print(f"  Fetch command:  python autobiographer.py fetch {plugin_id}")
+        else:
+            print("  " + plugin.get_manual_download_instructions().replace("\n", "\n  "))
+
+
 def _run_fetch(args: argparse.Namespace) -> None:
     """Execute the ``fetch`` subcommand.
 
@@ -190,6 +222,9 @@ def main() -> None:
 
     Subcommands
     -----------
+    list
+        Print all registered plugins with their fetchability, required
+        environment variables, and configuration instructions.
     fetch <plugin>
         Fetch data for the named plugin. For plugins that support programmatic
         retrieval (e.g. ``lastfm``) this downloads and saves data locally.
@@ -200,6 +235,7 @@ def main() -> None:
     --------
     ::
 
+        python autobiographer.py list
         python autobiographer.py fetch lastfm
         python autobiographer.py fetch lastfm --pages 5
         python autobiographer.py fetch lastfm --from-date 2024-01-01
@@ -210,6 +246,15 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    subparsers.add_parser(
+        "list",
+        help="List all registered plugins with their configuration requirements.",
+        description=(
+            "Print every registered source plugin with its display name, type, "
+            "fetchability, and required environment variables or manual export instructions."
+        ),
+    )
 
     fetch_parser = subparsers.add_parser(
         "fetch",
@@ -253,6 +298,8 @@ def main() -> None:
 
     if args.command == "fetch":
         _run_fetch(args)
+    elif args.command == "list":
+        _run_list()
     else:
         parser.print_help()
 
