@@ -22,7 +22,7 @@ from pages.culture import render_culture
 from pages.data_sources import render_data_sources, render_plugin_page
 from pages.fitness import render_fitness
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
-from pages.music import render_music, render_timeline_analysis  # noqa: F401
+from pages.music import render_music  # noqa: F401
 from pages.overview import render_overview, render_top_charts  # noqa: F401
 from pages.places import render_places, render_spatial_analysis  # noqa: F401
 from plugins.sources import REGISTRY, load_builtin_plugins
