@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -114,8 +115,9 @@ class TestSwarmIntegration(unittest.TestCase):
         # Ensure timestamp is correct (1334000000)
         self.assertEqual(df.iloc[0]["timestamp"], 1334000000)
 
-    def test_swarm_venue_fallback(self):
-        # Mock data with only venue name
+    def test_swarm_venue_fallback_with_geocoder(self):
+        # When coordinates are present but no city/state/country in location,
+        # reverse_geocoder fills in city and country from lat/lng.
         json_data = {
             "items": [
                 {
@@ -132,9 +134,43 @@ class TestSwarmIntegration(unittest.TestCase):
         with open(os.path.join(self.test_dir, "checkins_venue.json"), "w") as f:
             json.dump(json_data, f)
 
-        df = load_swarm_data(self.test_dir)
-        self.assertEqual(df.iloc[0]["city"], "Greenwich Observatory")
-        self.assertEqual(df.iloc[0]["lat"], 51.4769)
+        mock_rg = unittest.mock.MagicMock()
+        # Only the venue item lacks city/state/country; the 2 setUp items have
+        # location.city set and are not passed to the geocoder.
+        mock_rg.search.return_value = [{"name": "London", "cc": "GB", "admin1": "England"}]
+        with patch.dict("sys.modules", {"reverse_geocoder": mock_rg}):
+            df = load_swarm_data(self.test_dir)
+
+        venue_row = df[df["venue"] == "Greenwich Observatory"].iloc[0]
+        self.assertEqual(venue_row["city"], "London")
+        self.assertEqual(venue_row["country"], "GB")
+        self.assertEqual(venue_row["lat"], 51.4769)
+
+    def test_swarm_venue_fallback_without_geocoder(self):
+        # When reverse_geocoder is absent, falls back to venue name / "Unknown".
+        json_data = {
+            "items": [
+                {
+                    "createdAt": 1335000000,
+                    "timeZoneOffset": 0,
+                    "venue": {
+                        "name": "Greenwich Observatory",
+                        "location": {"lat": 51.4769, "lng": 0.0005},
+                    },
+                }
+            ]
+        }
+
+        with open(os.path.join(self.test_dir, "checkins_venue.json"), "w") as f:
+            json.dump(json_data, f)
+
+        with patch.dict("sys.modules", {"reverse_geocoder": None}):
+            df = load_swarm_data(self.test_dir)
+
+        venue_row = df[df["venue"] == "Greenwich Observatory"].iloc[0]
+        self.assertEqual(venue_row["city"], "Greenwich Observatory")
+        self.assertEqual(venue_row["country"], "Unknown")
+        self.assertEqual(venue_row["lat"], 51.4769)
 
 
 if __name__ == "__main__":

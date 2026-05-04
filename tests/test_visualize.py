@@ -31,8 +31,9 @@ from pages.music import (
     render_music,
     render_plays_growth,
     render_quick_facts,
+    render_top_charts,
 )
-from pages.overview import render_overview, render_top_charts
+from pages.overview import render_overview
 from pages.places import render_spatial_analysis
 from visualize import main
 
@@ -384,58 +385,18 @@ class TestVisualize(unittest.TestCase):
             render_overview()
         mock_info.assert_called_once()
 
-    @patch("streamlit.header")
-    @patch("streamlit.radio")
-    @patch("streamlit.slider")
-    @patch("streamlit.columns")
-    @patch("streamlit.plotly_chart")
     @patch("streamlit.markdown")
-    def test_render_overview_with_lastfm_only(
-        self,
-        mock_md: MagicMock,
-        mock_plotly: MagicMock,
-        mock_cols: MagicMock,
-        mock_slider: MagicMock,
-        mock_radio: MagicMock,
-        mock_header: MagicMock,
-    ) -> None:
-        mock_radio.return_value = "artist"
-        mock_slider.return_value = 10
-        mock_cols.return_value = [MagicMock(), MagicMock()]
-
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=MagicMock())
-        ctx.__exit__ = MagicMock(return_value=False)
-        with (
-            patch("streamlit.session_state", {"df": self.df, "swarm_df": None}),
-            patch("streamlit.container", return_value=ctx),
-        ):
+    def test_render_overview_with_lastfm_only(self, mock_md: MagicMock) -> None:
+        with patch("streamlit.session_state", {"df": self.df, "swarm_df": None}):
             render_overview()
 
-        # Hero card and header are rendered via st.markdown
+        # Hero card is rendered via st.markdown; no charts on overview page
         self.assertTrue(mock_md.called)
-        # No st.metric calls — KPI row was removed
-        self.assertEqual(mock_cols.call_count, 1)  # only the Top Charts columns call
+        calls_html = [c for c in mock_md.call_args_list if "autobio-hero-card" in str(c)]
+        self.assertEqual(len(calls_html), 1)
 
-    @patch("streamlit.header")
-    @patch("streamlit.radio")
-    @patch("streamlit.slider")
-    @patch("streamlit.columns")
-    @patch("streamlit.plotly_chart")
     @patch("streamlit.markdown")
-    def test_render_overview_with_swarm_data(
-        self,
-        mock_md: MagicMock,
-        mock_plotly: MagicMock,
-        mock_cols: MagicMock,
-        mock_slider: MagicMock,
-        mock_radio: MagicMock,
-        mock_header: MagicMock,
-    ) -> None:
-        mock_radio.return_value = "artist"
-        mock_slider.return_value = 10
-        mock_cols.return_value = [MagicMock(), MagicMock()]
-
+    def test_render_overview_with_swarm_data(self, mock_md: MagicMock) -> None:
         swarm_df = pd.DataFrame(
             {
                 "venue": ["Café A", "Café B", "Café A"],
@@ -446,19 +407,13 @@ class TestVisualize(unittest.TestCase):
             }
         )
 
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=MagicMock())
-        ctx.__exit__ = MagicMock(return_value=False)
-        with (
-            patch("streamlit.session_state", {"df": self.df, "swarm_df": swarm_df}),
-            patch("streamlit.container", return_value=ctx),
-        ):
+        with patch("streamlit.session_state", {"df": self.df, "swarm_df": swarm_df}):
             render_overview()
 
         # Foursquare section should appear in the hero card HTML
-        hero_html = mock_md.call_args_list[1][0][0]
-        self.assertIn("Foursquare", hero_html)
-        self.assertIn("check-ins", hero_html)
+        all_html = " ".join(str(c) for c in mock_md.call_args_list)
+        self.assertIn("Foursquare", all_html)
+        self.assertIn("check-ins", all_html)
 
 
 class TestMusicHelpers(unittest.TestCase):

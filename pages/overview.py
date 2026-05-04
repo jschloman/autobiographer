@@ -1,14 +1,12 @@
-"""Overview page — hero card and top-entity charts."""
+"""Overview page — hero card."""
 
 from __future__ import annotations
 
 import datetime
 
-import plotly.express as px
 import streamlit as st
 from pandas import DataFrame
 
-from analysis_utils import get_top_entities
 from components.theme import (
     ACCENT_CYAN,
     ACCENT_GREEN,
@@ -18,8 +16,6 @@ from components.theme import (
     ACCENT_PURPLE,
     ACCENT_YELLOW,
     TEXT_DIM,
-    apply_dark_theme,
-    card_container,
 )
 
 
@@ -32,36 +28,6 @@ def _stat_html(value: str, label: str, color: str) -> str:
         f'<p style="font-size:11px;color:{TEXT_DIM};margin:4px 0 0 0">{label}</p>'
         f"</div>"
     )
-
-
-def render_top_charts(df: DataFrame) -> None:
-    """Render top entity charts with a type toggle.
-
-    Args:
-        df: Loaded listening history DataFrame.
-    """
-    st.header("Top Charts")
-    entity_type = st.radio("Select chart type", ["artist", "album", "track"], horizontal=True)
-    limit = st.slider(f"Top {entity_type.capitalize()}s to show", 5, 50, 10)
-    top_data = get_top_entities(df, entity_type, limit=limit)
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        fig_bar = px.bar(
-            top_data,
-            x="Plays",
-            y=entity_type,
-            orientation="h",
-            title=f"Top {limit} {entity_type.capitalize()}s",
-        )
-        fig_bar.update_layout(yaxis={"categoryorder": "total ascending"})
-        apply_dark_theme(fig_bar)
-        st.plotly_chart(fig_bar, width="stretch")
-    with col2:
-        fig_pie = px.pie(
-            top_data.head(10), values="Plays", names=entity_type, title="Market Share (Top 10)"
-        )
-        apply_dark_theme(fig_pie)
-        st.plotly_chart(fig_pie, width="stretch")
 
 
 def render_overview() -> None:
@@ -153,7 +119,3 @@ def render_overview() -> None:
 
     parts += ["</div>", "</div>"]
     st.markdown("".join(parts), unsafe_allow_html=True)
-
-    # ── Top charts (card grid) ────────────────────────────────────────────────
-    with card_container():
-        render_top_charts(df)

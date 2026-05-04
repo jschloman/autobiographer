@@ -30,7 +30,7 @@ def get_cache_key(
         key_parts.append(str(os.path.getmtime(assumptions_file)))
 
     # Include version to invalidate cache if logic changes
-    key_parts.append("v1.4")
+    key_parts.append("v1.5")
 
     return hashlib.md5("".join(key_parts).encode(), usedforsecurity=False).hexdigest()  # noqa: S324
 
@@ -152,6 +152,10 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                     state = location.get("state")
                     country = location.get("country")
 
+                    # Track whether this item has no geographic text at all so
+                    # we can batch-reverse-geocode from lat/lng after the loop.
+                    needs_geocode = not (city or state or country)
+
                     if not city:
                         city = state or country or venue.get("name", "Unknown")
                     if not state:
@@ -172,6 +176,7 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                             "venue": venue.get("name", "Unknown"),
                             "lat": lat,
                             "lng": lng,
+                            "_needs_geocode": needs_geocode and lat is not None and lng is not None,
                         }
                     )
         except Exception as e:
@@ -183,6 +188,24 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
         )
 
     df = pd.DataFrame(all_checkins)
+
+    # Reverse-geocode rows that had no city/state/country in the export but do
+    # have coordinates (common in newer Foursquare GDPR exports which omit
+    # venue.location entirely).
+    geo_mask = df["_needs_geocode"].astype(bool)
+    if geo_mask.any():
+        try:
+            import reverse_geocoder as rg  # optional dependency
+
+            coords = list(zip(df.loc[geo_mask, "lat"], df.loc[geo_mask, "lng"]))
+            results = rg.search(coords, verbose=False)
+            df.loc[geo_mask, "city"] = [r["name"] for r in results]
+            df.loc[geo_mask, "state"] = [r.get("admin1", r["cc"]) for r in results]
+            df.loc[geo_mask, "country"] = [r["cc"] for r in results]
+        except ImportError:
+            pass  # degrade to venue-name / "Unknown" fallbacks already set
+
+    df = df.drop(columns=["_needs_geocode"])
     df = df.sort_values("timestamp").drop_duplicates("timestamp")
     return df
 

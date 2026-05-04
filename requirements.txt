@@ -17,3 +17,4 @@ playwright
 imageio
 imageio-ffmpeg
 numpy
+reverse_geocoder

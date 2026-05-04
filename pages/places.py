@@ -1,4 +1,4 @@
-"""Places page — geographic listening history map."""
+"""Places page — geographic listening history map and check-in insights."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import os
 import time
 
 import numpy as np
+import pandas as pd
+import plotly.express as px
 import pydeck as pdk
 import streamlit as st
 from pandas import DataFrame
@@ -18,6 +20,7 @@ from components.theme import (
     MAP_COUNTRY_UNVISITED_RGBA,
     MAP_COUNTRY_VISITED_RGBA,
     MAP_STATE_BORDER_RGBA,
+    apply_dark_theme,
 )
 
 
@@ -364,6 +367,68 @@ def render_spatial_analysis(df: DataFrame) -> None:
     """)
 
     st.dataframe(geo_data.sort_values("Plays", ascending=False), hide_index=True)
+
+
+def render_checkin_insights() -> None:
+    """Render the Places Insights page: country and city breakdown of Swarm check-ins.
+
+    Reads ``st.session_state['swarm_df']``.  Shows an empty state when no
+    Foursquare/Swarm data has been loaded.
+    """
+    swarm_df: DataFrame | None = st.session_state.get("swarm_df")
+
+    st.header("Check-in Insights")
+
+    if swarm_df is None or swarm_df.empty:
+        st.info(
+            "No Foursquare/Swarm data loaded yet. "
+            "Configure the Swarm export directory in the sidebar."
+        )
+        return
+
+    # ── Countries ─────────────────────────────────────────────────────────────
+    st.subheader("By Country")
+    country_counts = (
+        swarm_df.groupby("country").size().reset_index(name="Check-ins")
+        if "country" in swarm_df.columns
+        else pd.DataFrame(columns=["country", "Check-ins"])
+    )
+    country_counts = country_counts.sort_values("Check-ins", ascending=False).reset_index(drop=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig = px.bar(
+            country_counts,
+            x="country",
+            y="Check-ins",
+            title=f"Check-ins across {len(country_counts)} countries",
+        )
+        apply_dark_theme(fig)
+        st.plotly_chart(fig, width="stretch")
+    with col2:
+        st.dataframe(country_counts, hide_index=True, width="stretch")
+
+    # ── Cities ────────────────────────────────────────────────────────────────
+    st.subheader("Top Cities")
+    if "city" in swarm_df.columns:
+        city_counts = (
+            swarm_df.groupby(["city", "country"]).size().reset_index(name="Check-ins")
+            if "country" in swarm_df.columns
+            else swarm_df.groupby("city").size().reset_index(name="Check-ins")
+        )
+        city_counts = city_counts.sort_values("Check-ins", ascending=False).reset_index(drop=True)
+        limit = st.slider("Cities to show", 10, 50, 20)
+        fig2 = px.bar(
+            city_counts.head(limit),
+            x="Check-ins",
+            y="city",
+            orientation="h",
+            color="country" if "country" in city_counts.columns else None,
+            title=f"Top {limit} cities",
+        )
+        fig2.update_layout(yaxis={"categoryorder": "total ascending"})
+        apply_dark_theme(fig2)
+        st.plotly_chart(fig2, width="stretch")
 
 
 def render_places() -> None:
