@@ -4,8 +4,10 @@ import unittest
 import pandas as pd
 
 from analysis_utils import (
+    get_artist_monthly_ranks,
     get_cumulative_plays,
     get_forgotten_favorites,
+    get_genre_weekly,
     get_hourly_distribution,
     get_listening_intensity,
     get_listening_streaks,
@@ -111,6 +113,56 @@ class TestAnalysisUtils(unittest.TestCase):
         self.assertEqual(len(hourly), 2)  # Hour 10 and 11
         self.assertEqual(hourly[hourly["hour"] == 10].iloc[0]["Plays"], 2)
         self.assertEqual(hourly[hourly["hour"] == 11].iloc[0]["Plays"], 1)
+
+    def test_get_genre_weekly_returns_expected_columns(self):
+        dates = pd.to_datetime(["2021-01-04", "2021-01-04", "2021-01-11", "2021-01-11"])
+        df = pd.DataFrame(
+            {
+                "artist": ["Artist A", "Artist B", "Artist A", "Artist A"],
+                "date_text": dates,
+            }
+        )
+        result = get_genre_weekly(df, n=5)
+        self.assertListEqual(list(result.columns), ["date", "genre", "scrobbles"])
+
+    def test_get_genre_weekly_aggregates_correctly(self):
+        dates = pd.to_datetime(["2021-01-04", "2021-01-04", "2021-01-11"])
+        df = pd.DataFrame({"artist": ["Artist A", "Artist A", "Artist A"], "date_text": dates})
+        result = get_genre_weekly(df, n=2)
+        self.assertEqual(result["scrobbles"].sum(), 3)
+        self.assertEqual(len(result), 2)  # two distinct weeks
+
+    def test_get_genre_weekly_empty(self):
+        empty = pd.DataFrame(columns=["artist", "date_text"])
+        result = get_genre_weekly(empty)
+        self.assertTrue(result.empty)
+
+    def test_get_genre_weekly_limits_to_top_n(self):
+        dates = pd.to_datetime(["2021-01-04"] * 5)
+        df = pd.DataFrame({"artist": ["A", "B", "C", "D", "E"], "date_text": dates})
+        result = get_genre_weekly(df, n=3)
+        self.assertLessEqual(result["genre"].nunique(), 3)
+
+    def test_get_artist_monthly_ranks_columns(self):
+        dates = pd.to_datetime(["2021-01-15", "2021-01-20", "2021-02-10"])
+        df = pd.DataFrame({"artist": ["Artist A", "Artist B", "Artist A"], "date_text": dates})
+        result = get_artist_monthly_ranks(df, n=5)
+        self.assertListEqual(list(result.columns), ["month", "artist", "rank"])
+
+    def test_get_artist_monthly_ranks_rank_1_is_highest_plays(self):
+        dates = pd.to_datetime(["2021-01-01"] * 3 + ["2021-01-02"])
+        df = pd.DataFrame(
+            {"artist": ["Artist A", "Artist A", "Artist A", "Artist B"], "date_text": dates}
+        )
+        result = get_artist_monthly_ranks(df, n=2)
+        jan = result[result["month"].dt.month == 1]
+        rank1_artist = jan.loc[jan["rank"] == 1, "artist"].values[0]
+        self.assertEqual(rank1_artist, "Artist A")
+
+    def test_get_artist_monthly_ranks_empty(self):
+        empty = pd.DataFrame(columns=["artist", "date_text"])
+        result = get_artist_monthly_ranks(empty)
+        self.assertTrue(result.empty)
 
 
 if __name__ == "__main__":

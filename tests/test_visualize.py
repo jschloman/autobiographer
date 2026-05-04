@@ -324,7 +324,7 @@ class TestVisualize(unittest.TestCase):
 
         render_activity_over_time(self.df)
 
-        mock_subheader.assert_called_with("All-Time Activity")
+        mock_subheader.assert_called_with("Activity Over Time")
         self.assertEqual(mock_plotly.call_count, 2)
         mock_plotly.assert_any_call(ANY, width="stretch")
 
