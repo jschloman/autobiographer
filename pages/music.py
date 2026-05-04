@@ -14,7 +14,7 @@ from analysis_utils import (
     get_listening_intensity,
     get_top_entities,
 )
-from components.theme import AMBER, TEAL, apply_dark_theme
+from components.theme import AMBER, TEAL, apply_dark_theme, card_container
 
 
 def _filter_by_date(df: pd.DataFrame, start: datetime.date, end: datetime.date) -> pd.DataFrame:
@@ -181,7 +181,7 @@ def render_daily_chart(filtered: pd.DataFrame) -> None:
     fig = px.bar(intensity, x="date", y="Plays", title="Daily Scrobbles")
     fig.update_traces(marker_color=TEAL)
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_listening_clock(filtered: pd.DataFrame) -> None:
@@ -205,7 +205,7 @@ def render_listening_clock(filtered: pd.DataFrame) -> None:
     fig.update_traces(marker_color=AMBER)
     fig.update_xaxes(tickmode="linear", tick0=0, dtick=2)
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_plays_growth(filtered: pd.DataFrame) -> None:
@@ -220,7 +220,37 @@ def render_plays_growth(filtered: pd.DataFrame) -> None:
     fig = px.area(cumulative, x="date", y="CumulativePlays", title="Plays Growth")
     fig.update_traces(line_color=TEAL, fillcolor="rgba(0,200,200,0.15)")
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_top_charts(df: pd.DataFrame) -> None:
+    """Render top entity charts with a type toggle.
+
+    Args:
+        df: Loaded listening history DataFrame.
+    """
+    st.header("Top Charts")
+    entity_type = st.radio("Select chart type", ["artist", "album", "track"], horizontal=True)
+    limit = st.slider(f"Top {entity_type.capitalize()}s to show", 5, 50, 10)
+    top_data = get_top_entities(df, entity_type, limit=limit)
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig_bar = px.bar(
+            top_data,
+            x="Plays",
+            y=entity_type,
+            orientation="h",
+            title=f"Top {limit} {entity_type.capitalize()}s",
+        )
+        fig_bar.update_layout(yaxis={"categoryorder": "total ascending"})
+        apply_dark_theme(fig_bar)
+        st.plotly_chart(fig_bar, width="stretch")
+    with col2:
+        fig_pie = px.pie(
+            top_data.head(10), values="Plays", names=entity_type, title="Market Share (Top 10)"
+        )
+        apply_dark_theme(fig_pie)
+        st.plotly_chart(fig_pie, width="stretch")
 
 
 def render_activity_over_time(df: pd.DataFrame) -> None:
@@ -235,13 +265,13 @@ def render_activity_over_time(df: pd.DataFrame) -> None:
     intensity = get_listening_intensity(df, freq_map[freq_label])
     fig = px.line(intensity, x="date", y="Plays", title=f"Plays per {freq_label}")
     apply_dark_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     cumulative = get_cumulative_plays(df)
     fig2 = px.area(cumulative, x="date", y="CumulativePlays", title="All-Time Total Plays")
     fig2.update_traces(line_color=TEAL, fillcolor="rgba(0,200,200,0.15)")
     apply_dark_theme(fig2)
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 
 def render_music() -> None:
@@ -284,6 +314,10 @@ def render_music() -> None:
         render_listening_clock(filtered)
     with col2:
         render_plays_growth(filtered)
+
+    st.divider()
+    with card_container():
+        render_top_charts(df)
 
     st.divider()
     render_activity_over_time(df)

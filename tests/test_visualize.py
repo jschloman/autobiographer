@@ -31,8 +31,9 @@ from pages.music import (
     render_music,
     render_plays_growth,
     render_quick_facts,
+    render_top_charts,
 )
-from pages.overview import render_top_charts
+from pages.overview import render_overview
 from pages.places import render_spatial_analysis
 from visualize import main
 
@@ -325,7 +326,7 @@ class TestVisualize(unittest.TestCase):
 
         mock_subheader.assert_called_with("All-Time Activity")
         self.assertEqual(mock_plotly.call_count, 2)
-        mock_plotly.assert_any_call(ANY, use_container_width=True)
+        mock_plotly.assert_any_call(ANY, width="stretch")
 
     @patch("streamlit.header")
     @patch("streamlit.subheader")
@@ -376,6 +377,43 @@ class TestVisualize(unittest.TestCase):
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")
         mock_nav.assert_called_once()
         mock_pg.run.assert_called_once()
+
+    @patch("streamlit.info")
+    @patch("streamlit.markdown")
+    def test_render_overview_empty_state(self, mock_md: MagicMock, mock_info: MagicMock) -> None:
+        with patch("streamlit.session_state", {"df": None}):
+            render_overview()
+        mock_info.assert_called_once()
+
+    @patch("streamlit.markdown")
+    def test_render_overview_with_lastfm_only(self, mock_md: MagicMock) -> None:
+        with patch("streamlit.session_state", {"df": self.df, "swarm_df": None}):
+            render_overview()
+
+        # Hero card is rendered via st.markdown; no charts on overview page
+        self.assertTrue(mock_md.called)
+        calls_html = [c for c in mock_md.call_args_list if "autobio-hero-card" in str(c)]
+        self.assertEqual(len(calls_html), 1)
+
+    @patch("streamlit.markdown")
+    def test_render_overview_with_swarm_data(self, mock_md: MagicMock) -> None:
+        swarm_df = pd.DataFrame(
+            {
+                "venue": ["Café A", "Café B", "Café A"],
+                "city": ["London", "Paris", "London"],
+                "country": ["UK", "France", "UK"],
+                "lat": [51.5, 48.8, 51.5],
+                "lng": [-0.1, 2.3, -0.1],
+            }
+        )
+
+        with patch("streamlit.session_state", {"df": self.df, "swarm_df": swarm_df}):
+            render_overview()
+
+        # Foursquare section should appear in the hero card HTML
+        all_html = " ".join(str(c) for c in mock_md.call_args_list)
+        self.assertIn("Foursquare", all_html)
+        self.assertIn("check-ins", all_html)
 
 
 class TestMusicHelpers(unittest.TestCase):
