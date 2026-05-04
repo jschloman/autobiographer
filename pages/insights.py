@@ -7,6 +7,7 @@ import streamlit as st
 from pandas import DataFrame
 
 from analysis_utils import (
+    get_day_hour_heatmap,
     get_forgotten_favorites,
     get_hourly_distribution,
     get_listening_streaks,
@@ -118,27 +119,7 @@ def render_insights_and_narrative(df: DataFrame) -> None:
             apply_dark_theme(fig_hourly)
             st.plotly_chart(fig_hourly, width="stretch")
         with col_pat2:
-            df_copy = filtered_df.copy()
-            df_copy["day_of_week"] = df_copy["date_text"].dt.day_name()
-            df_copy["hour"] = df_copy["date_text"].dt.hour
-            heatmap_data = df_copy.groupby(["day_of_week", "hour"]).size().reset_index(name="Plays")
-            days_order = [
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-            ]
-            import pandas as pd
-
-            heatmap_data["day_of_week"] = pd.Categorical(
-                heatmap_data["day_of_week"], categories=days_order, ordered=True
-            )
-            heatmap_pivot = heatmap_data.pivot(
-                index="day_of_week", columns="hour", values="Plays"
-            ).fillna(0)
+            heatmap_pivot = get_day_hour_heatmap(filtered_df)
             fig_heatmap = px.imshow(
                 heatmap_pivot,
                 labels=dict(x="Hour of Day", y="Day of Week", color="Plays"),
@@ -188,4 +169,5 @@ def render_insights() -> None:
         )
         return
 
-    render_insights_and_narrative(df)
+    with st.spinner("Loading insights..."):
+        render_insights_and_narrative(df)

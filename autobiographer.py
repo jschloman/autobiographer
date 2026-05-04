@@ -91,17 +91,16 @@ class Autobiographer:
         if not filename:
             filename = f"data/lastfm_{self.username}_tracks.csv"
 
-        flat_data = []
-        for track in tracks:
-            flat_data.append(
-                {
-                    "artist": track.get("artist", {}).get("#text"),
-                    "album": track.get("album", {}).get("#text"),
-                    "track": track.get("name"),
-                    "timestamp": track.get("date", {}).get("uts"),
-                    "date_text": track.get("date", {}).get("#text"),
-                }
-            )
+        flat_data = [
+            {
+                "artist": track.get("artist", {}).get("#text"),
+                "album": track.get("album", {}).get("#text"),
+                "track": track.get("name"),
+                "timestamp": track.get("date", {}).get("uts"),
+                "date_text": track.get("date", {}).get("#text"),
+            }
+            for track in tracks
+        ]
 
         df = pd.DataFrame(flat_data)
         os.makedirs(os.path.dirname(filename), exist_ok=True)

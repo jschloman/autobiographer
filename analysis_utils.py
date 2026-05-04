@@ -600,11 +600,13 @@ def get_listening_intensity(df: pd.DataFrame, freq: str = "D") -> pd.DataFrame:
         return pd.DataFrame()
     # pandas Period uses 'M' for month-end; resample uses the newer 'ME' alias.
     period_freq = "M" if freq == "ME" else freq
-    df_copy = df.copy()
-    df_copy["date_group"] = df_copy["date_text"].dt.to_period(period_freq).dt.to_timestamp()
-    intensity = df_copy.groupby("date_group").size().reset_index(name="Plays")
-    intensity.rename(columns={"date_group": "date"}, inplace=True)
-    return intensity
+    return (
+        df.assign(date_group=df["date_text"].dt.to_period(period_freq).dt.to_timestamp())
+        .groupby("date_group")
+        .size()
+        .reset_index(name="Plays")
+        .rename(columns={"date_group": "date"})
+    )
 
 
 def get_milestones(df: pd.DataFrame, intervals: Optional[list[int]] = None) -> pd.DataFrame:
@@ -634,30 +636,25 @@ def get_listening_streaks(df: pd.DataFrame) -> dict:
     if df.empty:
         return {"longest_streak": 0, "current_streak": 0}
 
-    dates = pd.to_datetime(df["date_text"]).dt.date.unique()
-    dates = sorted(dates)
-
-    if not dates:
+    dates_series = pd.to_datetime(df["date_text"]).dt.normalize().drop_duplicates().sort_values()
+    if dates_series.empty:
         return {"longest_streak": 0, "current_streak": 0}
 
-    longest = 1
-    current = 1
+    # Each gap > 1 day starts a new streak group.
+    gap = dates_series.diff().dt.days.fillna(1)
+    group_ids = (gap != 1).cumsum()
+    streak_lengths = group_ids.value_counts()
 
-    for i in range(1, len(dates)):
-        if (dates[i] - dates[i - 1]).days == 1:
-            current += 1
-        else:
-            longest = max(longest, current)
-            current = 1
-
-    longest = max(longest, current)
-    today = pd.Timestamp.now().date()
-    is_active = (today - dates[-1]).days <= 1
+    longest = int(streak_lengths.max())
+    last_group = group_ids.iloc[-1]
+    current = int(streak_lengths[last_group])
+    if (pd.Timestamp.now().normalize() - dates_series.iloc[-1]).days > 1:
+        current = 0
 
     return {
         "longest_streak": longest,
-        "current_streak": current if is_active else 0,
-        "last_active": dates[-1],
+        "current_streak": current,
+        "last_active": dates_series.iloc[-1].date(),
     }
 
 
@@ -678,16 +675,9 @@ def get_forgotten_favorites(
         return pd.DataFrame()
 
     past_top = past_df["artist"].value_counts().head(top_n * 2)
-    recent_artists = set(recent_df["artist"].unique())
-
-    forgotten = []
-    for artist, count in past_top.items():
-        if artist not in recent_artists:
-            forgotten.append({"Artist": artist, "Past Plays": count})
-            if len(forgotten) >= top_n:
-                break
-
-    return pd.DataFrame(forgotten)
+    recent_artists = recent_df["artist"].unique()
+    forgotten_series = past_top[~past_top.index.isin(recent_artists)].head(top_n)
+    return pd.DataFrame({"Artist": forgotten_series.index, "Past Plays": forgotten_series.values})
 
 
 def get_cumulative_plays(df: pd.DataFrame) -> pd.DataFrame:
@@ -705,10 +695,30 @@ def get_hourly_distribution(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate the distribution of plays throughout the hours of the day."""
     if "date_text" not in df.columns:
         return pd.DataFrame()
-    df_copy = df.copy()
-    df_copy["hour"] = df_copy["date_text"].dt.hour
-    hourly = df_copy.groupby("hour").size().reset_index(name="Plays")
-    return hourly
+    return df.assign(hour=df["date_text"].dt.hour).groupby("hour").size().reset_index(name="Plays")
+
+
+def get_day_hour_heatmap(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a pivot table of play counts by day-of-week and hour of day.
+
+    Args:
+        df: Listening history with a ``date_text`` column.
+
+    Returns:
+        DataFrame indexed by day name (Monday–Sunday, ordered) with hour-of-day
+        columns 0–23 and integer play counts as values.  Empty if no data.
+    """
+    if "date_text" not in df.columns or df.empty:
+        return pd.DataFrame()
+    days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    data = (
+        df.assign(day_of_week=df["date_text"].dt.day_name(), hour=df["date_text"].dt.hour)
+        .groupby(["day_of_week", "hour"])
+        .size()
+        .reset_index(name="Plays")
+    )
+    data["day_of_week"] = pd.Categorical(data["day_of_week"], categories=days_order, ordered=True)
+    return data.pivot(index="day_of_week", columns="hour", values="Plays").fillna(0)
 
 
 def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:

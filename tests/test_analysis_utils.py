@@ -6,6 +6,7 @@ import pandas as pd
 from analysis_utils import (
     get_artist_monthly_ranks,
     get_cumulative_plays,
+    get_day_hour_heatmap,
     get_forgotten_favorites,
     get_genre_weekly,
     get_hourly_distribution,
@@ -113,6 +114,27 @@ class TestAnalysisUtils(unittest.TestCase):
         self.assertEqual(len(hourly), 2)  # Hour 10 and 11
         self.assertEqual(hourly[hourly["hour"] == 10].iloc[0]["Plays"], 2)
         self.assertEqual(hourly[hourly["hour"] == 11].iloc[0]["Plays"], 1)
+
+    def test_get_listening_streaks_single_date(self):
+        df = pd.DataFrame({"date_text": pd.to_datetime(["2021-06-15"])})
+        streaks = get_listening_streaks(df)
+        self.assertEqual(streaks["longest_streak"], 1)
+        self.assertEqual(streaks["last_active"].isoformat(), "2021-06-15")
+
+    def test_get_listening_streaks_current_active(self):
+        today = pd.Timestamp.now().normalize()
+        dates = pd.to_datetime([today - pd.Timedelta(days=1), today])
+        df = pd.DataFrame({"date_text": dates})
+        streaks = get_listening_streaks(df)
+        self.assertEqual(streaks["longest_streak"], 2)
+        self.assertEqual(streaks["current_streak"], 2)
+
+    def test_get_day_hour_heatmap_shape(self):
+        df = load_listening_data(self.test_csv)
+        pivot = get_day_hour_heatmap(df)
+        self.assertFalse(pivot.empty)
+        self.assertIn(10, pivot.columns)
+        self.assertIn(11, pivot.columns)
 
     def test_get_genre_weekly_returns_expected_columns(self):
         dates = pd.to_datetime(["2021-01-04", "2021-01-04", "2021-01-11", "2021-01-11"])

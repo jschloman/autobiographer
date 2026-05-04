@@ -82,20 +82,21 @@ footer                             {visibility: hidden;}
 """
 
 
-def main() -> None:
-    """Configure and launch the Autobiographer multi-page dashboard."""
-    st.set_page_config(page_title="Autobiographer", layout="wide")
-    st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
-
-    # Populate REGISTRY before building nav so plugin pages can be listed.
+@st.cache_resource
+def _load_plugins_once() -> None:
+    """Load built-in plugins into REGISTRY exactly once per server process."""
     load_builtin_plugins()
 
-    sources_pages = [
+
+@st.cache_resource
+def _build_plugin_nav_pages() -> list[st.Page]:
+    """Build the Sources nav pages once; reused on every subsequent rerun."""
+    pages: list[st.Page] = [
         st.Page(render_data_sources, title="Data Sources", icon=":material/database:"),
     ]
     for plugin_id, plugin_cls in REGISTRY.items():
         plugin = plugin_cls()
-        sources_pages.append(
+        pages.append(
             st.Page(
                 partial(render_plugin_page, plugin_id),
                 title=plugin.DISPLAY_NAME,
@@ -103,6 +104,18 @@ def main() -> None:
                 url_path=plugin_id,
             )
         )
+    return pages
+
+
+def main() -> None:
+    """Configure and launch the Autobiographer multi-page dashboard."""
+    st.set_page_config(page_title="Autobiographer", layout="wide")
+    st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+
+    # Populate REGISTRY before building nav so plugin pages can be listed.
+    _load_plugins_once()
+
+    sources_pages = _build_plugin_nav_pages()
 
     pg = st.navigation(
         {

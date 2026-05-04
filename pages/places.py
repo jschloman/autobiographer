@@ -445,4 +445,5 @@ def render_places() -> None:
         )
         return
 
-    render_spatial_analysis(df)
+    with st.spinner("Loading map..."):
+        render_spatial_analysis(df)
