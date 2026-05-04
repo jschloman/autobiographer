@@ -709,3 +709,56 @@ def get_hourly_distribution(df: pd.DataFrame) -> pd.DataFrame:
     df_copy["hour"] = df_copy["date_text"].dt.hour
     hourly = df_copy.groupby("hour").size().reset_index(name="Plays")
     return hourly
+
+
+def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:
+    """Return weekly scrobble counts for the top N artists.
+
+    Because Last.fm exports do not include genre tags, artist name is used as
+    the grouping dimension.  The column is named ``genre`` for compatibility
+    with generic streamgraph rendering code.
+
+    Args:
+        df: Listening history with ``artist`` and ``date_text`` columns.
+        n: Number of top artists (by total plays) to include.
+
+    Returns:
+        DataFrame with columns ``date`` (ISO-week Monday as Timestamp),
+        ``genre`` (artist name), and ``scrobbles`` (int).
+    """
+    if df.empty or "artist" not in df.columns or "date_text" not in df.columns:
+        return pd.DataFrame(columns=["date", "genre", "scrobbles"])
+
+    top_artists = df["artist"].value_counts().head(n).index.tolist()
+    subset = df[df["artist"].isin(top_artists)].copy()
+    subset["date"] = subset["date_text"].dt.to_period("W").dt.start_time
+    weekly = subset.groupby(["date", "artist"]).size().reset_index(name="scrobbles")
+    return weekly.rename(columns={"artist": "genre"})
+
+
+def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
+    """Return monthly rank positions for the top N artists overall.
+
+    Ranks are computed per-month: rank 1 = most scrobbles in that month.
+    Only the top ``n`` artists by all-time play count are tracked.
+
+    Args:
+        df: Listening history with ``artist`` and ``date_text`` columns.
+        n: Number of top artists to track.
+
+    Returns:
+        DataFrame with columns ``month`` (first-day Timestamp), ``artist``
+        (str), and ``rank`` (int, 1 = most played).
+    """
+    if df.empty or "artist" not in df.columns or "date_text" not in df.columns:
+        return pd.DataFrame(columns=["month", "artist", "rank"])
+
+    top_artists = df["artist"].value_counts().head(n).index.tolist()
+    subset = df[df["artist"].isin(top_artists)].copy()
+    subset["month"] = subset["date_text"].dt.to_period("M").dt.to_timestamp()
+
+    monthly = subset.groupby(["month", "artist"]).size().reset_index(name="plays")
+    monthly["rank"] = (
+        monthly.groupby("month")["plays"].rank(method="min", ascending=False).astype(int)
+    )
+    return monthly[["month", "artist", "rank"]]

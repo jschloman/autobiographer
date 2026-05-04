@@ -6,15 +6,26 @@ import datetime
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from analysis_utils import (
+    get_artist_monthly_ranks,
     get_cumulative_plays,
+    get_genre_weekly,
     get_hourly_distribution,
     get_listening_intensity,
     get_top_entities,
 )
-from components.theme import AMBER, TEAL, apply_dark_theme, card_container
+from components.theme import (
+    ACCENT_INDIGO,
+    AMBER,
+    COLORWAY,
+    LIFTED_BG,
+    TEAL,
+    apply_dark_theme,
+    card_container,
+)
 
 
 def _filter_by_date(df: pd.DataFrame, start: datetime.date, end: datetime.date) -> pd.DataFrame:
@@ -224,7 +235,11 @@ def render_plays_growth(filtered: pd.DataFrame) -> None:
 
 
 def render_top_charts(df: pd.DataFrame) -> None:
-    """Render top entity charts with a type toggle.
+    """Render top entity charts with rank badges and a type toggle.
+
+    The #1 entry is highlighted in indigo; remaining bars use the lifted
+    background colour.  A scrobble count label appears outside each bar and
+    a rank badge is embedded in the y-axis label.
 
     Args:
         df: Loaded listening history DataFrame.
@@ -235,14 +250,26 @@ def render_top_charts(df: pd.DataFrame) -> None:
     top_data = get_top_entities(df, entity_type, limit=limit)
     col1, col2 = st.columns([2, 1])
     with col1:
-        fig_bar = px.bar(
-            top_data,
-            x="Plays",
-            y=entity_type,
-            orientation="h",
-            title=f"Top {limit} {entity_type.capitalize()}s",
+        plays = top_data["Plays"].tolist()
+        ranked_labels = [f"#{r}  {n}" for r, n in enumerate(top_data[entity_type], 1)]
+        colors = [ACCENT_INDIGO] + [LIFTED_BG] * (len(top_data) - 1)
+
+        fig_bar = go.Figure(
+            go.Bar(
+                x=plays,
+                y=ranked_labels,
+                orientation="h",
+                marker_color=colors,
+                text=[f"{p:,}" for p in plays],
+                textposition="outside",
+                cliponaxis=False,
+            )
         )
-        fig_bar.update_layout(yaxis={"categoryorder": "total ascending"})
+        fig_bar.update_layout(
+            title=f"Top {limit} {entity_type.capitalize()}s",
+            yaxis={"categoryorder": "total ascending"},
+            margin={"r": 80},
+        )
         apply_dark_theme(fig_bar)
         st.plotly_chart(fig_bar, width="stretch")
     with col2:
@@ -253,13 +280,65 @@ def render_top_charts(df: pd.DataFrame) -> None:
         st.plotly_chart(fig_pie, width="stretch")
 
 
-def render_activity_over_time(df: pd.DataFrame) -> None:
-    """Render all-time listening intensity and cumulative growth charts.
+def render_streamgraph(df: pd.DataFrame) -> None:
+    """Render a stacked-area streamgraph of top-artist scrobble volume by week.
+
+    Uses artist as the category dimension because Last.fm exports do not
+    include genre tags.
 
     Args:
-        df: Full listening history DataFrame.
+        df: Listening history DataFrame (already filtered to the selected date range).
     """
-    st.subheader("All-Time Activity")
+    weekly = get_genre_weekly(df)
+    if weekly.empty:
+        return
+    fig = px.area(
+        weekly,
+        x="date",
+        y="scrobbles",
+        color="genre",
+        title="Artist Listening Timeline",
+        color_discrete_sequence=COLORWAY,
+        labels={"genre": "Artist", "scrobbles": "Scrobbles", "date": ""},
+    )
+    fig.update_layout(legend_title_text="Artist")
+    apply_dark_theme(fig)
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_bump_chart(df: pd.DataFrame) -> None:
+    """Render a monthly artist rank bump chart for the top 10 artists.
+
+    Hidden when fewer than two months of data are available.
+
+    Args:
+        df: Listening history DataFrame (already filtered to the selected date range).
+    """
+    ranks = get_artist_monthly_ranks(df)
+    if ranks.empty or ranks["month"].nunique() < 2:
+        return
+    fig = px.line(
+        ranks,
+        x="month",
+        y="rank",
+        color="artist",
+        title="Artist Rank Over Time",
+        color_discrete_sequence=COLORWAY,
+        labels={"month": "", "rank": "Rank", "artist": "Artist"},
+        markers=True,
+    )
+    fig.update_yaxes(autorange="reversed", dtick=1, title="Rank")
+    apply_dark_theme(fig)
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_activity_over_time(df: pd.DataFrame) -> None:
+    """Render listening intensity and cumulative growth charts for the given period.
+
+    Args:
+        df: Listening history DataFrame (already filtered to the selected date range).
+    """
+    st.subheader("Activity Over Time")
     freq_map = {"Daily": "D", "Weekly": "W", "Monthly": "ME"}
     freq_label = st.selectbox("Grouping", list(freq_map.keys()))
     intensity = get_listening_intensity(df, freq_map[freq_label])
@@ -268,7 +347,7 @@ def render_activity_over_time(df: pd.DataFrame) -> None:
     st.plotly_chart(fig, width="stretch")
 
     cumulative = get_cumulative_plays(df)
-    fig2 = px.area(cumulative, x="date", y="CumulativePlays", title="All-Time Total Plays")
+    fig2 = px.area(cumulative, x="date", y="CumulativePlays", title="Total Plays")
     fig2.update_traces(line_color=TEAL, fillcolor="rgba(0,200,200,0.15)")
     apply_dark_theme(fig2)
     st.plotly_chart(fig2, width="stretch")
@@ -317,7 +396,9 @@ def render_music() -> None:
 
     st.divider()
     with card_container():
-        render_top_charts(df)
+        render_top_charts(filtered)
 
     st.divider()
-    render_activity_over_time(df)
+    render_streamgraph(filtered)
+    render_bump_chart(filtered)
+    render_activity_over_time(filtered)

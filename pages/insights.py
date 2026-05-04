@@ -14,7 +14,7 @@ from analysis_utils import (
     get_top_entities,
     get_unique_entities,
 )
-from components.theme import SEQUENTIAL_SCALE, apply_dark_theme
+from components.theme import COLORWAY, SEQUENTIAL_SCALE, apply_dark_theme
 
 
 def render_insights_and_narrative(df: DataFrame) -> None:
@@ -55,6 +55,22 @@ def render_insights_and_narrative(df: DataFrame) -> None:
     if filtered_df.empty:
         st.warning("No data found for the selected granular filters.")
     else:
+        if "album" in filtered_df.columns:
+            top_artists = get_top_entities(filtered_df, "artist", limit=12)["artist"].tolist()
+            subset = filtered_df[filtered_df["artist"].isin(top_artists)].copy()
+            grouped = subset.groupby(["artist", "album"]).size().reset_index(name="scrobbles")
+            fig_sun = px.sunburst(
+                grouped,
+                path=["artist", "album"],
+                values="scrobbles",
+                title="Music Listening Hierarchy",
+                color_discrete_sequence=COLORWAY,
+            )
+            fig_sun.update_traces(textinfo="label+percent parent")
+            apply_dark_theme(fig_sun)
+            st.plotly_chart(fig_sun, width="stretch")
+
+        st.markdown("---")
         col_top1, col_top2 = st.columns(2)
 
         with col_top1:
@@ -156,6 +172,7 @@ def render_insights_and_narrative(df: DataFrame) -> None:
         st.dataframe(forgotten, hide_index=True)
     else:
         st.info("No forgotten favorites identified.")
+
 
 
 def render_insights() -> None:
