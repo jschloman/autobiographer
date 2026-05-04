@@ -12,3 +12,30 @@ repos:
       - id: mypy
         additional_dependencies:
           - types-requests
+
+  - repo: local
+    hooks:
+      - id: ruff-check-push
+        name: ruff check (pre-push)
+        entry: ruff check .
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: ruff-format-check-push
+        name: ruff format --check (pre-push)
+        entry: ruff format --check .
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: mypy-push
+        name: mypy (pre-push)
+        entry: mypy
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest-push
+        name: pytest (pre-push)
+        entry: pytest
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
