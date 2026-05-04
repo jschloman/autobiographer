@@ -371,7 +371,11 @@ class TestVisualize(unittest.TestCase):
         mock_pg = MagicMock()
         mock_nav.return_value = mock_pg
 
-        with patch("visualize.render_sidebar"), patch("visualize.load_builtin_plugins"):
+        with (
+            patch("visualize.render_sidebar"),
+            patch("visualize._load_plugins_once"),
+            patch("visualize._build_plugin_nav_pages", return_value=[]),
+        ):
             main()
 
         mock_config.assert_called_once_with(page_title="Autobiographer", layout="wide")

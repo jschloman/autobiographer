@@ -110,8 +110,9 @@ def render_quick_facts(filtered: pd.DataFrame, prev: pd.DataFrame) -> None:
     most_active_count = 0
     if not filtered.empty:
         daily_counts = filtered.groupby(filtered["date_text"].dt.date).size()
-        most_active_count = int(daily_counts.max())
-        most_active_label = f"{most_active_count} on {daily_counts.idxmax().strftime('%d %b')}"
+        peak_date = daily_counts.idxmax()
+        most_active_count = int(daily_counts[peak_date])
+        most_active_label = f"{most_active_count} on {peak_date.strftime('%d %b')}"
 
     prev_days = (
         (prev["date_text"].dt.date.max() - prev["date_text"].dt.date.min()).days + 1
@@ -379,26 +380,27 @@ def render_music() -> None:
     prev_start, prev_end = _prev_period(start, end)
     prev = _filter_by_date(df, prev_start, prev_end)
 
-    st.divider()
-    render_quick_facts(filtered, prev)
+    with st.spinner("Loading charts..."):
+        st.divider()
+        render_quick_facts(filtered, prev)
 
-    st.divider()
-    render_entity_columns(filtered, df)
+        st.divider()
+        render_entity_columns(filtered, df)
 
-    st.divider()
-    render_daily_chart(filtered)
+        st.divider()
+        render_daily_chart(filtered)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        render_listening_clock(filtered)
-    with col2:
-        render_plays_growth(filtered)
+        col1, col2 = st.columns(2)
+        with col1:
+            render_listening_clock(filtered)
+        with col2:
+            render_plays_growth(filtered)
 
-    st.divider()
-    with card_container():
-        render_top_charts(filtered)
+        st.divider()
+        with card_container():
+            render_top_charts(filtered)
 
-    st.divider()
-    render_streamgraph(filtered)
-    render_bump_chart(filtered)
-    render_activity_over_time(filtered)
+        st.divider()
+        render_streamgraph(filtered)
+        render_bump_chart(filtered)
+        render_activity_over_time(filtered)
