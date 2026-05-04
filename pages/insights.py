@@ -174,7 +174,6 @@ def render_insights_and_narrative(df: DataFrame) -> None:
         st.info("No forgotten favorites identified.")
 
 
-
 def render_insights() -> None:
     """Render the Insights page.
 
