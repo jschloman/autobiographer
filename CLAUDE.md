@@ -85,3 +85,16 @@ All four commands must exit with code 0. If any fail, fix the reported errors an
 ```bash
 pip install ruff mypy types-requests
 ```
+
+### Installing git hooks (one-time, per clone)
+
+The project uses `pre-commit` to enforce the quality gate automatically. After cloning, run:
+
+```bash
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+This installs two hook stages:
+- **pre-commit**: ruff (auto-fix + format) and mypy — fast checks on every commit.
+- **pre-push**: full CI gate (ruff check, ruff format --check, mypy, pytest) — mirrors CI exactly, blocking any push that would fail.
