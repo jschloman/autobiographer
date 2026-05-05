@@ -20,6 +20,7 @@ from components.plugin_config import (
     render_plugin_config_fields,
     settings,
 )
+from core.fetch_utils import FetchCheckpoint
 from plugins.sources import REGISTRY, load_builtin_plugins
 from plugins.sources.base import _count_records_at_path
 
@@ -85,7 +86,8 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
     # ── Fetch ────────────────────────────────────────────────────────────────
     st.subheader("Fetch Data")
 
-    pending_fetch: tuple[str] | None = None  # (versioned_path,)
+    pending_fetch: tuple[str, bool] | None = None  # (versioned_path, resume)
+    checkpoint: FetchCheckpoint | None = None
 
     if plugin.FETCHABLE:
         env_vars = plugin.get_fetch_env_vars()
@@ -101,8 +103,37 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
                 st.caption(f"Fetching as **{identity}**")
             versioned_path = plugin.get_versioned_output_path()
             st.caption(f"Will save to `{versioned_path}`")
-            if st.button("Fetch Latest Data", key=f"fetch_{plugin_id}"):
-                pending_fetch = (versioned_path,)
+
+            checkpoint = FetchCheckpoint(
+                checkpoint_dir="data/cache",
+                plugin_id=plugin_id,
+                identity=identity or plugin_id,
+            )
+
+            resume_state = None
+            stale_checkpoint = False
+            try:
+                resume_state = checkpoint.load()
+            except ValueError:
+                stale_checkpoint = True
+
+            if stale_checkpoint:
+                st.caption("⚠️ A previous checkpoint was found but is too old (>7 days) — ignored.")
+
+            if resume_state is not None:
+                last_page, _ = resume_state
+                col_fetch, col_resume = st.columns(2)
+                if col_fetch.button("Fetch Latest Data", key=f"fetch_{plugin_id}"):
+                    pending_fetch = (versioned_path, False)
+                col_resume.info(
+                    f"Checkpoint found: page {last_page}, "
+                    f"~{checkpoint.tracks_fetched:,} tracks already fetched"
+                )
+                if col_resume.button("Resume Interrupted Fetch", key=f"resume_{plugin_id}"):
+                    pending_fetch = (versioned_path, True)
+            else:
+                if st.button("Fetch Latest Data", key=f"fetch_{plugin_id}"):
+                    pending_fetch = (versioned_path, False)
     else:
         primary_value = next(iter(config.values()), "").strip() if config else ""
         if not primary_value or not os.path.exists(primary_value) or primary_path_missing:
@@ -112,18 +143,27 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
 
     # Execute pending fetch after button block so progress renders correctly.
     if pending_fetch is not None:
-        (versioned_path,) = pending_fetch
+        versioned_path, do_resume = pending_fetch
         fetch_status_ph = st.empty()
 
         def _on_progress(page: int, total: int) -> None:
-            fetch_status_ph.info(f"Fetching page {page} of {total}…")
+            frac = page / total if total > 0 else 0.0
+            fetch_status_ph.progress(
+                frac,
+                text=f"Page {page} of {total} · ~{page * 200:,} estimated tracks",
+            )
 
-        fetch_status_ph.info("Starting fetch…")
+        fetch_status_ph.progress(0.0, text="Starting fetch…")
         try:
             parent = os.path.dirname(versioned_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            plugin.fetch(output_path=versioned_path, progress_callback=_on_progress)
+            plugin.fetch(
+                output_path=versioned_path,
+                progress_callback=_on_progress,
+                checkpoint=checkpoint,
+                resume=do_resume,
+            )
 
             record_count = _count_records_at_path(versioned_path) or 0
             ts = datetime.now(tz=timezone.utc).isoformat()
