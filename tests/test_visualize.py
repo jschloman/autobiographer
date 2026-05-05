@@ -157,6 +157,7 @@ class TestSidebarDataLoading(unittest.TestCase):
             patch("components.sidebar.load_assumptions", return_value={}),
             patch("components.sidebar.get_cache_key", return_value="key"),
             patch("components.sidebar.get_cached_data", return_value=cached_df),
+            patch("components.sidebar.build_html", return_value="<html></html>"),
             patch("streamlit.sidebar") as mock_sidebar,
         ):
             mock_sidebar.date_input.return_value = [
@@ -173,7 +174,7 @@ class TestSidebarDataLoading(unittest.TestCase):
 class TestConfigPersistence(unittest.TestCase):
     """Tests for LocalSettings-backed session state hydration."""
 
-    def _make_settings(self, plugin_configs: dict) -> MagicMock:  # type: ignore[type-arg]
+    def _make_settings(self, plugin_configs: dict[str, object]) -> MagicMock:
         """Return a mock LocalSettings with get_all_plugin_configs returning plugin_configs."""
         mock_settings = MagicMock(spec=LocalSettings)
         mock_settings.get_all_plugin_configs.return_value = plugin_configs
@@ -460,10 +461,14 @@ class TestMusicHelpers(unittest.TestCase):
         self.assertEqual(ps, datetime.date(2021, 1, 1))
 
     def test_pct_delta_positive(self) -> None:
-        self.assertAlmostEqual(_pct_delta(120, 100), 20.0)
+        result = _pct_delta(120, 100)
+        assert result is not None
+        self.assertAlmostEqual(result, 20.0)
 
     def test_pct_delta_negative(self) -> None:
-        self.assertAlmostEqual(_pct_delta(80, 100), -20.0)
+        result = _pct_delta(80, 100)
+        assert result is not None
+        self.assertAlmostEqual(result, -20.0)
 
     def test_pct_delta_zero_previous(self) -> None:
         self.assertIsNone(_pct_delta(10, 0))
@@ -538,6 +543,79 @@ class TestMusicHelpers(unittest.TestCase):
         st.session_state["df"] = None
         render_music()
         mock_info.assert_called_once()
+
+
+class TestRenderShareButton(unittest.TestCase):
+    """Tests for the _render_share_button sidebar export helper."""
+
+    def _make_df(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "artist": ["Artist A", "Artist B"],
+                "album": ["Album 1", "Album 2"],
+                "track": ["Track 1", "Track 2"],
+                "timestamp": [1610000000, 1620000000],
+                "date_text": pd.to_datetime(["2021-01-07", "2021-05-03"]),
+            }
+        )
+
+    @patch("streamlit.sidebar")
+    @patch("components.sidebar.build_html", return_value="<html>mock</html>")
+    def test_download_button_called_with_html_mime(
+        self, mock_build: MagicMock, mock_sidebar: MagicMock
+    ) -> None:
+        from components.sidebar import _render_share_button
+
+        _render_share_button(self._make_df(), None)
+        mock_sidebar.download_button.assert_called_once()
+        call_kwargs = mock_sidebar.download_button.call_args.kwargs
+        self.assertEqual(call_kwargs["mime"], "text/html")
+
+    @patch("streamlit.sidebar")
+    @patch("components.sidebar.build_html", return_value="<html>mock</html>")
+    def test_filename_encodes_date_range(
+        self, mock_build: MagicMock, mock_sidebar: MagicMock
+    ) -> None:
+        from components.sidebar import _render_share_button
+
+        _render_share_button(self._make_df(), None)
+        call_kwargs = mock_sidebar.download_button.call_args.kwargs
+        self.assertIn("2021-01-07", call_kwargs["file_name"])
+        self.assertIn("2021-05-03", call_kwargs["file_name"])
+        self.assertTrue(call_kwargs["file_name"].endswith(".html"))
+
+    @patch("streamlit.sidebar")
+    @patch("components.sidebar.build_html", return_value="<html>mock</html>")
+    def test_data_is_utf8_bytes(self, mock_build: MagicMock, mock_sidebar: MagicMock) -> None:
+        from components.sidebar import _render_share_button
+
+        _render_share_button(self._make_df(), None)
+        call_kwargs = mock_sidebar.download_button.call_args.kwargs
+        self.assertIsInstance(call_kwargs["data"], bytes)
+        self.assertEqual(call_kwargs["data"].decode("utf-8"), "<html>mock</html>")
+
+    @patch("streamlit.sidebar")
+    @patch("components.sidebar.build_html", return_value="<html>mock</html>")
+    def test_swarm_df_forwarded_to_build_html(
+        self, mock_build: MagicMock, mock_sidebar: MagicMock
+    ) -> None:
+        from components.sidebar import _render_share_button
+
+        swarm_df = pd.DataFrame({"city": ["London"]})
+        _render_share_button(self._make_df(), swarm_df)
+        # build_html signature: build_html(df, generated_at, swarm_df=None)
+        self.assertIs(mock_build.call_args[1].get("swarm_df"), swarm_df)
+
+    @patch("streamlit.sidebar")
+    @patch("components.sidebar.build_html", return_value="<html>mock</html>")
+    def test_generated_at_is_utc_timestamp(
+        self, mock_build: MagicMock, mock_sidebar: MagicMock
+    ) -> None:
+        from components.sidebar import _render_share_button
+
+        _render_share_button(self._make_df(), None)
+        generated_at = mock_build.call_args[0][1]
+        self.assertIn("UTC", generated_at)
 
 
 if __name__ == "__main__":

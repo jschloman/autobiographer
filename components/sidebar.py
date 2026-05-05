@@ -5,11 +5,13 @@ This module's only responsibilities are:
   1. Hydrate session state from disk.
   2. Load and process the active dataset into ``st.session_state["df"]``.
   3. Expose the global date-range filter.
+  4. Offer a "Share this view" HTML export download.
 """
 
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -27,6 +29,7 @@ from components.plugin_config import (
     get_plugin_config_from_session,
     load_config_into_session_state,
 )
+from export_html import build_html
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 
@@ -94,4 +97,35 @@ def render_sidebar() -> None:
                 & (df["date_text"].dt.date <= date_range[1])
             ]
 
+        st.sidebar.markdown('<p class="autobio-section-header">Export</p>', unsafe_allow_html=True)
+        _render_share_button(df, st.session_state.get("swarm_df"))
+
     st.session_state["df"] = df
+
+
+def _render_share_button(df: pd.DataFrame, swarm_df: pd.DataFrame | None) -> None:
+    """Render the 'Share this view' HTML export download button.
+
+    Generates a fully self-contained HTML report from the current date-filtered
+    DataFrame and serves it as a browser download.  The filename encodes the
+    date range so saved files are self-describing.
+
+    Args:
+        df: Date-filtered listening DataFrame (reflects current sidebar filter).
+        swarm_df: Optional Swarm check-in DataFrame; adds a Places tab when present.
+    """
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    date_min = df["date_text"].min().date()
+    date_max = df["date_text"].max().date()
+    filename = f"autobiographer-{date_min}-to-{date_max}.html"
+
+    html_bytes = build_html(df, generated_at, swarm_df=swarm_df).encode("utf-8")
+
+    st.sidebar.download_button(
+        label="Share this view",
+        data=html_bytes,
+        file_name=filename,
+        mime="text/html",
+        use_container_width=True,
+    )
