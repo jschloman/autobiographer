@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from datetime import date as date_type
 from datetime import datetime
 
 import pandas as pd
@@ -34,7 +35,9 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from analysis_utils import (
+    get_artist_monthly_ranks,
     get_cumulative_plays,
+    get_genre_weekly,
     get_hourly_distribution,
     get_listening_intensity,
     get_listening_streaks,
@@ -43,7 +46,7 @@ from analysis_utils import (
     load_listening_data,
     load_swarm_data,
 )
-from components.theme import SEQUENTIAL_SCALE, apply_dark_theme
+from components.theme import COLORWAY, SEQUENTIAL_SCALE, apply_dark_theme
 from core.local_settings import LocalSettings
 
 # ── Palette constants (mirrors components/theme.py) ────────────────────────
@@ -107,6 +110,156 @@ def _table_html(df: pd.DataFrame) -> str:
         f"<tbody>{rows}</tbody></table>"
         f"</div>"
     )
+
+
+# ── Shared HTML scaffold ────────────────────────────────────────────────────
+
+
+def _html_styles() -> str:
+    """Return the CSS block shared by all self-contained HTML exports."""
+    return f"""
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+  body {{
+    background: {_BG};
+    color: {_TEXT};
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+  }}
+
+  .container {{ max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }}
+
+  .app-header {{
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid {_BORDER};
+    padding-bottom: 1rem;
+  }}
+  .app-header h1 {{ font-size: 1.75rem; font-weight: 700; color: {_TEAL}; }}
+  .app-header .subtitle {{ color: {_MUTED}; font-size: 0.9rem; }}
+
+  .metrics-row {{
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+  }}
+  .metric-card {{
+    background: {_PANEL_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    min-width: 160px;
+    flex: 1;
+  }}
+  .metric-card .label {{
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: {_MUTED};
+    margin-bottom: 0.25rem;
+  }}
+  .metric-card .value {{
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: {_TEAL};
+  }}
+
+  .tab-nav {{
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid {_BORDER};
+    padding-bottom: 0;
+  }}
+  .tab-btn {{
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: {_MUTED};
+    cursor: pointer;
+    font-size: 0.95rem;
+    padding: 0.5rem 1rem;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }}
+  .tab-btn:hover {{ color: {_TEXT}; }}
+  .tab-btn.active {{ color: {_TEAL}; border-bottom-color: {_TEAL}; font-weight: 600; }}
+
+  .tab-content {{ display: none; }}
+  .tab-content.active {{ display: block; }}
+
+  .section-title {{
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: {_TEXT};
+    margin: 1.5rem 0 0.75rem 0;
+  }}
+  .section-desc {{
+    font-size: 0.85rem;
+    color: {_MUTED};
+    margin-bottom: 1rem;
+  }}
+
+  .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
+  @media (max-width: 800px) {{ .grid-2 {{ grid-template-columns: 1fr; }} }}
+
+  .card {{
+    background: {_PANEL_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 1rem;
+    overflow: hidden;
+  }}
+
+  .table-wrap {{ overflow-x: auto; }}
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }}
+  th {{
+    text-align: left;
+    padding: 0.4rem 0.75rem;
+    background: rgba(0,200,200,0.08);
+    color: {_TEAL};
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }}
+  td {{
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid {_BORDER};
+    color: {_TEXT};
+  }}
+  tr:last-child td {{ border-bottom: none; }}
+  tr:hover td {{ background: rgba(255,255,255,0.03); }}
+
+  .streak-row {{ display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }}
+  .streak-card {{
+    background: {_PANEL_BG};
+    border: 1px solid {_BORDER};
+    border-radius: 8px;
+    padding: 0.75rem 1.25rem;
+  }}
+  .streak-card .s-label {{ font-size: 0.75rem; color: {_MUTED}; }}
+  .streak-card .s-value {{ font-size: 1.4rem; font-weight: 700; color: {_AMBER}; }}
+
+  .empty-msg {{ color: {_MUTED}; font-style: italic; padding: 0.5rem 0; }}
+
+  .app-footer {{
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid {_BORDER};
+    color: {_MUTED};
+    font-size: 0.8rem;
+    text-align: center;
+  }}
+"""
 
 
 # ── Places tab builder ──────────────────────────────────────────────────────
@@ -212,6 +365,218 @@ def _build_places_html(swarm_df: pd.DataFrame) -> str:
       <div class="card">{div_cities}</div>
       <div class="card">{div_countries}</div>
     </div>"""
+
+
+# ── Music page export ───────────────────────────────────────────────────────
+
+
+def build_music_page_html(
+    filtered_df: pd.DataFrame,
+    start: date_type,
+    end: date_type,
+    generated_at: str,
+) -> str:
+    """Build a self-contained HTML export of the Music listening page.
+
+    Mirrors the charts rendered by ``pages/music.py`` for the given date range:
+    quick-facts metrics, daily scrobbles, listening clock, plays growth, top
+    artists/tracks/albums, streamgraph, bump chart, and monthly activity.
+
+    Args:
+        filtered_df: Listening history already filtered to ``[start, end]``.
+        start: Start date of the selected range (used in the title and footer).
+        end: End date of the selected range.
+        generated_at: Human-readable UTC timestamp shown in the footer.
+
+    Returns:
+        A complete ``<!DOCTYPE html>`` document as a string.
+    """
+    if filtered_df.empty:
+        return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Listening Report</title><style>{_html_styles()}</style></head><body>
+<div class="container"><header class="app-header"><h1>Listening Report</h1>
+<span class="subtitle">{start} – {end}</span></header>
+<p class="empty-msg">No plays found in the selected date range.</p>
+<footer class="app-footer">Generated by Autobiographer &mdash; {generated_at}</footer>
+</div></body></html>"""
+
+    n = len(filtered_df)
+    days = max(1, (end - start).days + 1)
+    hours = n * 3.5 / 60
+
+    # Closure tracks which chart gets the inlined plotly.js bundle.
+    first_chart: list[bool] = [True]
+
+    def _chart(fig: go.Figure) -> str:
+        include = first_chart[0]
+        first_chart[0] = False
+        return _chart_div(fig, include_js=include)
+
+    # ── Daily scrobbles ──────────────────────────────────────────────────────
+    intensity_d = get_listening_intensity(filtered_df, "D")
+    div_daily = ""
+    if not intensity_d.empty:
+        fig = px.bar(intensity_d, x="date", y="Plays", title="Daily Scrobbles")
+        fig.update_traces(marker_color=_TEAL)
+        apply_dark_theme(fig)
+        div_daily = f'<div class="card">{_chart(fig)}</div>'
+
+    # ── Listening clock ──────────────────────────────────────────────────────
+    hourly = get_hourly_distribution(filtered_df)
+    div_clock = ""
+    if not hourly.empty:
+        all_hours = pd.DataFrame({"hour": range(24)})
+        hourly = all_hours.merge(hourly, on="hour", how="left").fillna(0)
+        hourly["Plays"] = hourly["Plays"].astype(int)
+        peak = hourly.loc[hourly["Plays"].idxmax()]
+        peak_label = f"{int(peak['hour']):02d}:00 ({int(peak['Plays'])} plays)"
+        fig = px.bar(hourly, x="hour", y="Plays", title=f"Listening Clock · Peak: {peak_label}")
+        fig.update_traces(marker_color=_AMBER)
+        fig.update_xaxes(tickmode="linear", tick0=0, dtick=2)
+        apply_dark_theme(fig)
+        div_clock = f'<div class="card">{_chart(fig)}</div>'
+
+    # ── Plays growth ─────────────────────────────────────────────────────────
+    cumulative = get_cumulative_plays(filtered_df)
+    div_growth = ""
+    if not cumulative.empty:
+        fig = px.area(cumulative, x="date", y="CumulativePlays", title="Plays Growth")
+        fig.update_traces(line_color=_TEAL, fillcolor="rgba(0,200,200,0.15)")
+        apply_dark_theme(fig)
+        div_growth = f'<div class="card">{_chart(fig)}</div>'
+
+    # ── Top artists / tracks / albums ────────────────────────────────────────
+    def _top_bar(entity: str, limit: int = 20) -> str:
+        top = get_top_entities(filtered_df, entity, limit=limit)
+        if top.empty:
+            return ""
+        fig = px.bar(
+            top,
+            x="Plays",
+            y=entity,
+            orientation="h",
+            title=f"Top {limit} {entity.capitalize()}s",
+        )
+        fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=600)
+        apply_dark_theme(fig)
+        return f'<div class="card" style="margin-top:1rem">{_chart(fig)}</div>'
+
+    div_artists = _top_bar("artist")
+    div_tracks = _top_bar("track")
+    div_albums = _top_bar("album")
+
+    # ── Streamgraph ──────────────────────────────────────────────────────────
+    weekly = get_genre_weekly(filtered_df)
+    div_stream = ""
+    if not weekly.empty:
+        fig = px.area(
+            weekly,
+            x="date",
+            y="scrobbles",
+            color="genre",
+            title="Artist Listening Timeline",
+            color_discrete_sequence=COLORWAY,
+            labels={"genre": "Artist", "scrobbles": "Scrobbles", "date": ""},
+        )
+        fig.update_layout(legend_title_text="Artist")
+        apply_dark_theme(fig)
+        div_stream = f'<div class="card" style="margin-top:1rem">{_chart(fig)}</div>'
+
+    # ── Bump chart ───────────────────────────────────────────────────────────
+    ranks = get_artist_monthly_ranks(filtered_df)
+    div_bump = ""
+    if not ranks.empty and ranks["month"].nunique() >= 2:
+        fig = px.line(
+            ranks,
+            x="month",
+            y="rank",
+            color="artist",
+            title="Artist Rank Over Time",
+            color_discrete_sequence=COLORWAY,
+            labels={"month": "", "rank": "Rank", "artist": "Artist"},
+            markers=True,
+        )
+        fig.update_yaxes(autorange="reversed", dtick=1, title="Rank")
+        apply_dark_theme(fig)
+        div_bump = f'<div class="card" style="margin-top:1rem">{_chart(fig)}</div>'
+
+    # ── Monthly intensity + cumulative ───────────────────────────────────────
+    intensity_m = get_listening_intensity(filtered_df, "ME")
+    div_monthly = ""
+    if not intensity_m.empty:
+        fig = px.line(intensity_m, x="date", y="Plays", title="Monthly Listening Activity")
+        apply_dark_theme(fig)
+        div_monthly = f'<div class="card" style="margin-top:1rem">{_chart(fig)}</div>'
+
+    div_cumulative = ""
+    if not cumulative.empty:
+        fig = px.area(cumulative, x="date", y="CumulativePlays", title="Total Plays (Cumulative)")
+        fig.update_traces(line_color=_TEAL, fillcolor="rgba(0,200,200,0.15)")
+        apply_dark_theme(fig)
+        div_cumulative = f'<div class="card" style="margin-top:1rem">{_chart(fig)}</div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listening Report · {start} – {end}</title>
+<style>{_html_styles()}</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="app-header">
+    <h1>Listening Report</h1>
+    <span class="subtitle">{start} – {end}</span>
+  </header>
+
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="label">Scrobbles</div>
+      <div class="value">{n:,}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Listening Time</div>
+      <div class="value">{hours:.0f}h</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Avg / Day</div>
+      <div class="value">{n / days:.0f}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Period</div>
+      <div class="value" style="font-size:0.9rem; padding-top:0.4rem">{start} – {end}</div>
+    </div>
+  </div>
+
+  <div class="section-title">Daily Activity</div>
+  {div_daily}
+
+  <div class="grid-2" style="margin-top:1rem">
+    {div_clock}
+    {div_growth}
+  </div>
+
+  <div class="section-title">Top Charts</div>
+  {div_artists}
+  {div_tracks}
+  {div_albums}
+
+  <div class="section-title">Timeline</div>
+  {div_stream}
+  {div_bump}
+  {div_monthly}
+  {div_cumulative}
+
+  <footer class="app-footer">
+    Generated by Autobiographer &mdash; {generated_at}
+    &mdash; all data processed locally, no external network calls.
+  </footer>
+
+</div>
+</body>
+</html>"""
 
 
 # ── Core report builder ─────────────────────────────────────────────────────
@@ -343,161 +708,7 @@ def build_html(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autobiographer</title>
-<style>
-  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
-  body {{
-    background: {_BG};
-    color: {_TEXT};
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 15px;
-    line-height: 1.5;
-  }}
-
-  /* ── Layout ── */
-  .container {{ max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }}
-
-  /* ── Header ── */
-  .app-header {{
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid {_BORDER};
-    padding-bottom: 1rem;
-  }}
-  .app-header h1 {{ font-size: 1.75rem; font-weight: 700; color: {_TEAL}; }}
-  .app-header .subtitle {{ color: {_MUTED}; font-size: 0.9rem; }}
-
-  /* ── Metrics row ── */
-  .metrics-row {{
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 2rem;
-  }}
-  .metric-card {{
-    background: {_PANEL_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 1rem 1.5rem;
-    min-width: 160px;
-    flex: 1;
-  }}
-  .metric-card .label {{
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: {_MUTED};
-    margin-bottom: 0.25rem;
-  }}
-  .metric-card .value {{
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: {_TEAL};
-  }}
-
-  /* ── Tabs ── */
-  .tab-nav {{
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    border-bottom: 1px solid {_BORDER};
-    padding-bottom: 0;
-  }}
-  .tab-btn {{
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: {_MUTED};
-    cursor: pointer;
-    font-size: 0.95rem;
-    padding: 0.5rem 1rem;
-    margin-bottom: -1px;
-    transition: color 0.15s, border-color 0.15s;
-  }}
-  .tab-btn:hover {{ color: {_TEXT}; }}
-  .tab-btn.active {{ color: {_TEAL}; border-bottom-color: {_TEAL}; font-weight: 600; }}
-
-  /* ── Tab content ── */
-  .tab-content {{ display: none; }}
-  .tab-content.active {{ display: block; }}
-
-  /* ── Section headers ── */
-  .section-title {{
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: {_TEXT};
-    margin: 1.5rem 0 0.75rem 0;
-  }}
-  .section-desc {{
-    font-size: 0.85rem;
-    color: {_MUTED};
-    margin-bottom: 1rem;
-  }}
-
-  /* ── Two-column grid ── */
-  .grid-2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
-  @media (max-width: 800px) {{ .grid-2 {{ grid-template-columns: 1fr; }} }}
-
-  /* ── Card wrapper for charts ── */
-  .card {{
-    background: {_PANEL_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 1rem;
-    overflow: hidden;
-  }}
-
-  /* ── Tables ── */
-  .table-wrap {{ overflow-x: auto; }}
-  table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }}
-  th {{
-    text-align: left;
-    padding: 0.4rem 0.75rem;
-    background: rgba(0,200,200,0.08);
-    color: {_TEAL};
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }}
-  td {{
-    padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid {_BORDER};
-    color: {_TEXT};
-  }}
-  tr:last-child td {{ border-bottom: none; }}
-  tr:hover td {{ background: rgba(255,255,255,0.03); }}
-
-  /* ── Streak metrics ── */
-  .streak-row {{ display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }}
-  .streak-card {{
-    background: {_PANEL_BG};
-    border: 1px solid {_BORDER};
-    border-radius: 8px;
-    padding: 0.75rem 1.25rem;
-  }}
-  .streak-card .s-label {{ font-size: 0.75rem; color: {_MUTED}; }}
-  .streak-card .s-value {{ font-size: 1.4rem; font-weight: 700; color: {_AMBER}; }}
-
-  /* ── Empty state ── */
-  .empty-msg {{ color: {_MUTED}; font-style: italic; padding: 0.5rem 0; }}
-
-  /* ── Footer ── */
-  .app-footer {{
-    margin-top: 3rem;
-    padding-top: 1rem;
-    border-top: 1px solid {_BORDER};
-    color: {_MUTED};
-    font-size: 0.8rem;
-    text-align: center;
-  }}
-</style>
+<style>{_html_styles()}</style>
 <script>
   function showTab(id) {{
     document.querySelectorAll('.tab-content').forEach(function(el) {{

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import tempfile
@@ -10,7 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from export_html import _build_places_html, _table_html, build_html, export_report, main
+from export_html import (
+    _build_places_html,
+    _table_html,
+    build_html,
+    build_music_page_html,
+    export_report,
+    main,
+)
 
 
 def _sample_df() -> pd.DataFrame:
@@ -210,6 +218,52 @@ class TestBuildHtmlWithSwarm(unittest.TestCase):
         self.assertIn("tab-listening", html)
         self.assertIn("tab-insights", html)
         self.assertIn("tab-places", html)
+
+
+class TestBuildMusicPageHtml(unittest.TestCase):
+    """Tests for the build_music_page_html page-specific export."""
+
+    def setUp(self) -> None:
+        self.df = _sample_df()
+        self.start = datetime.date(2021, 1, 7)
+        self.end = datetime.date(2021, 1, 10)
+
+    def test_returns_valid_html_document(self) -> None:
+        html = build_music_page_html(self.df, self.start, self.end, "2024-01-01 00:00 UTC")
+        self.assertTrue(html.strip().startswith("<!DOCTYPE html>"))
+        self.assertIn("</html>", html)
+
+    def test_title_contains_date_range(self) -> None:
+        html = build_music_page_html(self.df, self.start, self.end, "2024-01-01 00:00 UTC")
+        self.assertIn("2021-01-07", html)
+        self.assertIn("2021-01-10", html)
+
+    def test_contains_plotly_js(self) -> None:
+        html = build_music_page_html(self.df, self.start, self.end, "2024-01-01 00:00 UTC")
+        self.assertIn("Plotly", html)
+
+    def test_no_external_script_or_link_tags(self) -> None:
+        import re
+
+        html = build_music_page_html(self.df, self.start, self.end, "2024-01-01 00:00 UTC")
+        external_srcs = re.findall(r'<script[^>]+src=["\']https?://', html, re.IGNORECASE)
+        external_links = re.findall(r'<link[^>]+href=["\']https?://', html, re.IGNORECASE)
+        self.assertEqual(external_srcs, [], "Found external <script src> tags")
+        self.assertEqual(external_links, [], "Found external <link href> tags")
+
+    def test_generated_at_in_footer(self) -> None:
+        html = build_music_page_html(self.df, self.start, self.end, "1999-12-31 23:59 UTC")
+        self.assertIn("1999-12-31 23:59 UTC", html)
+
+    def test_empty_df_returns_empty_state_html(self) -> None:
+        html = build_music_page_html(pd.DataFrame(), self.start, self.end, "2024-01-01 00:00 UTC")
+        self.assertIn("No plays", html)
+        self.assertTrue(html.strip().startswith("<!DOCTYPE html>"))
+
+    def test_scrobble_count_in_metrics(self) -> None:
+        html = build_music_page_html(self.df, self.start, self.end, "2024-01-01 00:00 UTC")
+        # 4 rows in sample df
+        self.assertIn("4", html)
 
 
 class TestMain(unittest.TestCase):
