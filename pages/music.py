@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from datetime import timezone
 
 import pandas as pd
 import plotly.express as px
@@ -17,6 +18,7 @@ from analysis_utils import (
     get_listening_intensity,
     get_top_entities,
 )
+from components.share import render_share_button
 from components.theme import (
     ACCENT_INDIGO,
     AMBER,
@@ -26,6 +28,7 @@ from components.theme import (
     apply_dark_theme,
     card_container,
 )
+from export_html import build_music_page_html
 
 
 def _filter_by_date(df: pd.DataFrame, start: datetime.date, end: datetime.date) -> pd.DataFrame:
@@ -376,6 +379,10 @@ def render_music() -> None:
     if filtered.empty:
         st.warning("No plays found in the selected date range.")
         return
+
+    generated_at = datetime.datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    html_bytes = build_music_page_html(filtered, start, end, generated_at).encode("utf-8")
+    render_share_button(html_bytes, f"autobiographer-music-{start}-to-{end}.html")
 
     prev_start, prev_end = _prev_period(start, end)
     prev = _filter_by_date(df, prev_start, prev_end)

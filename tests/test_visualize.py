@@ -173,7 +173,7 @@ class TestSidebarDataLoading(unittest.TestCase):
 class TestConfigPersistence(unittest.TestCase):
     """Tests for LocalSettings-backed session state hydration."""
 
-    def _make_settings(self, plugin_configs: dict) -> MagicMock:  # type: ignore[type-arg]
+    def _make_settings(self, plugin_configs: dict[str, object]) -> MagicMock:
         """Return a mock LocalSettings with get_all_plugin_configs returning plugin_configs."""
         mock_settings = MagicMock(spec=LocalSettings)
         mock_settings.get_all_plugin_configs.return_value = plugin_configs
@@ -272,9 +272,10 @@ class TestVisualize(unittest.TestCase):
             self.df["date_text"].max().date(),
         ]
         mock_cols.side_effect = [
-            [MagicMock(), MagicMock()],
-            [MagicMock(), MagicMock(), MagicMock()],
-            [MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock()],  # share button (render_share_button)
+            [MagicMock(), MagicMock()],  # col_f1, col_f2 (artist/date filters)
+            [MagicMock(), MagicMock(), MagicMock()],  # col_a, col_b, col_c (sliders)
+            [MagicMock(), MagicMock()],  # fly_col1, fly_col2
         ]
         mock_slider.return_value = 3.0
 
@@ -349,10 +350,11 @@ class TestVisualize(unittest.TestCase):
     ) -> None:
         mock_select.return_value = "All"
         mock_cols.side_effect = [
-            [MagicMock()] * 4,
-            [MagicMock()] * 2,
-            [MagicMock()] * 2,
-            [MagicMock()] * 2,
+            [MagicMock()] * 4,  # filter columns
+            [MagicMock()] * 2,  # share button (render_share_button)
+            [MagicMock()] * 2,  # col_top1, col_top2
+            [MagicMock()] * 2,  # col_pat1, col_pat2
+            [MagicMock()] * 2,  # col_nar1, col_nar2
         ]
         mock_tabs.return_value = [MagicMock(), MagicMock(), MagicMock()]
 
@@ -460,10 +462,14 @@ class TestMusicHelpers(unittest.TestCase):
         self.assertEqual(ps, datetime.date(2021, 1, 1))
 
     def test_pct_delta_positive(self) -> None:
-        self.assertAlmostEqual(_pct_delta(120, 100), 20.0)
+        result = _pct_delta(120, 100)
+        assert result is not None
+        self.assertAlmostEqual(result, 20.0)
 
     def test_pct_delta_negative(self) -> None:
-        self.assertAlmostEqual(_pct_delta(80, 100), -20.0)
+        result = _pct_delta(80, 100)
+        assert result is not None
+        self.assertAlmostEqual(result, -20.0)
 
     def test_pct_delta_zero_previous(self) -> None:
         self.assertIsNone(_pct_delta(10, 0))
