@@ -40,6 +40,10 @@ def render_overview() -> None:
     ``st.session_state['swarm_df']`` (Foursquare/Swarm).  Shows an empty
     state when no data has been loaded.
     """
+    from components.sidebar import ensure_data_loaded
+
+    ensure_data_loaded()
+
     df: DataFrame | None = st.session_state.get("df")
     swarm_df: DataFrame | None = st.session_state.get("swarm_df")
 
