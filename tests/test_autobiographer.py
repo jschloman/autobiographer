@@ -1,6 +1,7 @@
 import os
 import time
 import unittest
+import unittest.mock
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -126,6 +127,7 @@ class TestRunFetch(unittest.TestCase):
         args.pages = kwargs.get("pages", None)
         args.from_date = kwargs.get("from_date", None)
         args.to_date = kwargs.get("to_date", None)
+        args.resume = kwargs.get("resume", False)
         return args
 
     def test_unknown_plugin_exits(self):
@@ -184,6 +186,7 @@ class TestRunFetch(unittest.TestCase):
         with (
             patch("plugins.sources.load_builtin_plugins"),
             patch("plugins.sources.REGISTRY", {"myplugin": fake_cls}),
+            patch("autobiographer.Progress"),
             patch("builtins.print"),
         ):
             _run_fetch(self._make_args("myplugin", output="/tmp/out.csv", pages=2))
@@ -193,6 +196,9 @@ class TestRunFetch(unittest.TestCase):
             pages=2,
             from_ts=None,
             to_ts=None,
+            progress_callback=unittest.mock.ANY,
+            checkpoint=unittest.mock.ANY,
+            resume=False,
         )
 
     def test_to_date_shifted_to_end_of_day(self):
@@ -206,6 +212,7 @@ class TestRunFetch(unittest.TestCase):
         with (
             patch("plugins.sources.load_builtin_plugins"),
             patch("plugins.sources.REGISTRY", {"myplugin": fake_cls}),
+            patch("autobiographer.Progress"),
             patch("builtins.print"),
         ):
             _run_fetch(self._make_args("myplugin", to_date="2026-01-01"))

@@ -55,6 +55,19 @@ ruff format .
 
 ### Step 2 — Verify everything is clean
 ```bash
+# Dependency sync — every package imported in source must be in pyproject.toml [dependencies]
+# (requirements.txt is for local venv convenience only; CI installs from pyproject.toml)
+python - <<'EOF'
+import tomllib, pathlib, sys
+data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+declared = {d.split(">=")[0].split("==")[0].split("[")[0].lower()
+            for d in data["project"]["dependencies"]}
+dev = {d.split(">=")[0].split("==")[0].lower()
+       for d in data["project"]["optional-dependencies"]["dev"]}
+print("Runtime deps:", sorted(declared))
+print("Dev deps:", sorted(dev))
+EOF
+
 # Lint and format
 ruff check .
 ruff format --check .
@@ -66,7 +79,7 @@ mypy
 pytest
 ```
 
-All four commands must exit with code 0. If any fail, fix the reported errors and re-run the full gate from Step 1 before pushing.
+All commands must exit with code 0. If any fail, fix the reported errors and re-run the full gate from Step 1 before pushing.
 
 ### Common failure patterns and fixes
 
@@ -79,6 +92,7 @@ All four commands must exit with code 0. If any fail, fix the reported errors an
 | `mypy` type mismatch | Fix the type annotation or add an explicit cast; do not use `# type: ignore` without a comment explaining why |
 | `pytest` test failure | Fix the code or test — never skip or delete a failing test |
 | `pytest` coverage below 80% | Add tests for the new code path |
+| CI fails with `ModuleNotFoundError` but tests pass locally | Package is in `requirements.txt` but missing from `pyproject.toml [project.dependencies]` — add it there; CI installs from `pyproject.toml`, not `requirements.txt` |
 
 ### Installing tools
 

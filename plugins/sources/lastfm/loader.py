@@ -123,7 +123,8 @@ class LastFmPlugin(SourcePlugin):
                 ``data/lastfm_{username}_tracks.csv``.
             **kwargs: Passed through to ``Autobiographer.fetch_recent_tracks()``.
                 Recognised keys: ``pages`` (int), ``from_ts`` (int), ``to_ts`` (int),
-                ``progress_callback`` (callable(page, total)).
+                ``progress_callback`` (callable(page, total)),
+                ``checkpoint`` (FetchCheckpoint), ``max_retries`` (int).
 
         Raises:
             OSError: If required env vars are not set.
@@ -146,6 +147,9 @@ class LastFmPlugin(SourcePlugin):
             from_ts=kwargs.get("from_ts"),
             to_ts=kwargs.get("to_ts"),
             progress_callback=kwargs.get("progress_callback"),
+            checkpoint=kwargs.get("checkpoint"),
+            resume=bool(kwargs.get("resume", False)),
+            max_retries=kwargs.get("max_retries", 3),
         )
         client.save_tracks_to_csv(tracks, filename=save_path)
 

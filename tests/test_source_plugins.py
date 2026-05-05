@@ -391,7 +391,13 @@ class TestFetchability(unittest.TestCase):
             plugin.fetch(output_path="/tmp/out.csv", pages=2)
 
         mock_client.fetch_recent_tracks.assert_called_once_with(
-            pages=2, from_ts=None, to_ts=None, progress_callback=None
+            pages=2,
+            from_ts=None,
+            to_ts=None,
+            progress_callback=None,
+            checkpoint=None,
+            resume=False,
+            max_retries=3,
         )
         mock_client.save_tracks_to_csv.assert_called_once_with([], filename="/tmp/out.csv")
 

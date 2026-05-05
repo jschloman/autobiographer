@@ -1,11 +1,22 @@
 import argparse
 import os
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
+from core.fetch_utils import FetchCheckpoint, retry_with_backoff
 
 load_dotenv()
 
@@ -34,7 +45,10 @@ class Autobiographer:
         from_ts: Optional[int] = None,
         to_ts: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
-    ) -> list[dict]:
+        checkpoint: Optional[FetchCheckpoint] = None,
+        resume: bool = False,
+        max_retries: int = 3,
+    ) -> list[dict[str, Any]]:
         """Fetch recent tracks for the user.
 
         Args:
@@ -44,35 +58,59 @@ class Autobiographer:
             to_ts: Unix timestamp upper bound (inclusive).
             progress_callback: Optional callable invoked after each page with
                 ``(current_page, total_pages)`` so callers can report progress.
-                Also receives ``(0, total_pages)`` before the first page fetch
-                once the total is known.
+            checkpoint: Optional ``FetchCheckpoint`` for incremental saving.
+                When provided, each completed page is saved so interrupted
+                runs can be resumed.
+            resume: If ``True`` and a ``checkpoint`` is given, load prior
+                progress and continue from the last completed page.
+            max_retries: Number of retry attempts per page on network error
+                (exponential backoff, default 3).
 
         Returns:
             List of raw track dicts from the Last.fm API.
+
+        Raises:
+            requests.exceptions.RequestException: If a page fetch fails after
+                all retries are exhausted.
         """
-        all_tracks = []
-        current_page = 1
+        all_tracks: list[dict[str, Any]] = []
+        start_page = 1
         total_pages = 1
 
+        if checkpoint and resume:
+            resume_data = checkpoint.load()
+            if resume_data is not None:
+                last_completed, prior_tracks = resume_data
+                all_tracks = list(prior_tracks)
+                start_page = last_completed + 1
+
+        current_page = start_page
+
         while True:
-            print(f"Fetching page {current_page}...")
-            params = {"limit": limit, "page": current_page}
+            params: dict[str, Any] = {"limit": limit, "page": current_page}
             if from_ts:
                 params["from"] = from_ts
             if to_ts:
                 params["to"] = to_ts
 
-            data = self._fetch_page("user.getrecenttracks", params)
+            def _do_fetch(p: dict[str, Any] = params) -> dict[str, Any]:
+                return self._fetch_page("user.getrecenttracks", p)
+
+            data = retry_with_backoff(_do_fetch, max_retries=max_retries)
 
             tracks = data.get("recenttracks", {}).get("track", [])
             if not tracks:
                 break
 
             # Filter out currently playing track if any
-            tracks = [t for t in tracks if not t.get("@attr", {}).get("nowplaying") == "true"]
-            all_tracks.extend(tracks)
+            page_tracks = [t for t in tracks if not t.get("@attr", {}).get("nowplaying") == "true"]
+            all_tracks.extend(page_tracks)
 
             total_pages = int(data.get("recenttracks", {}).get("@attr", {}).get("totalPages", 1))
+
+            if checkpoint:
+                checkpoint.save(current_page, total_pages, page_tracks)
+
             if progress_callback:
                 progress_callback(current_page, total_pages)
 
@@ -83,6 +121,9 @@ class Autobiographer:
 
             current_page += 1
             time.sleep(0.25)  # Rate limiting
+
+        if checkpoint:
+            checkpoint.clear()
 
         return all_tracks
 
@@ -170,7 +211,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
     Args:
         args: Parsed CLI arguments including ``plugin``, ``output``, ``pages``,
-            ``from_date``, and ``to_date``.
+            ``from_date``, ``to_date``, and ``resume``.
     """
     from plugins.sources import REGISTRY, load_builtin_plugins
 
@@ -207,13 +248,85 @@ def _run_fetch(args: argparse.Namespace) -> None:
     # Shift to-date to end of day so the full day is included.
     to_ts = to_ts_raw + 86399 if to_ts_raw is not None else None
 
-    print(f"Fetching {plugin.DISPLAY_NAME} data...")
-    plugin.fetch(
-        output_path=args.output or None,
-        pages=args.pages,
+    # Always create a checkpoint so every fetch can be resumed if interrupted.
+    identity = plugin.get_fetch_identity() or plugin_id
+    checkpoint = FetchCheckpoint(
+        checkpoint_dir="data/cache",
+        plugin_id=plugin_id,
+        identity=identity,
         from_ts=from_ts,
         to_ts=to_ts,
+        pages_limit=args.pages,
     )
+
+    if args.resume:
+        try:
+            resume_state = checkpoint.load()
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            raise SystemExit(1) from exc
+
+        if resume_state is not None:
+            last_page, _ = resume_state
+            print(
+                f"Resuming {plugin.DISPLAY_NAME} fetch from page {last_page + 1} "
+                f"(checkpoint found, {checkpoint.tracks_fetched:,} tracks already fetched)"
+            )
+        else:
+            print("No checkpoint found for this fetch configuration. Starting fresh.")
+
+    print(f"Fetching {plugin.DISPLAY_NAME} data...")
+
+    exc_holder: list[Exception] = []
+    interrupted = False
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=30),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+    ) as progress:
+        task_id = progress.add_task(f"[cyan]{plugin.DISPLAY_NAME}", total=None)
+
+        def update_progress(current_page: int, total_pages: int) -> None:
+            est_tracks = current_page * 200
+            progress.update(
+                task_id,
+                completed=current_page,
+                total=total_pages,
+                description=(
+                    f"[cyan]{plugin.DISPLAY_NAME}[/cyan] "
+                    f"[dim]page {current_page}/{total_pages} · ~{est_tracks:,} tracks[/dim]"
+                ),
+            )
+
+        try:
+            plugin.fetch(
+                output_path=args.output or None,
+                pages=args.pages,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                progress_callback=update_progress,
+                checkpoint=checkpoint,
+                resume=args.resume,
+            )
+        except requests.exceptions.RequestException as exc:
+            exc_holder.append(exc)
+        except KeyboardInterrupt:
+            interrupted = True
+
+    if interrupted:
+        print("\nFetch interrupted. Resume with:")
+        print(f"  python autobiographer.py fetch {plugin_id} --resume")
+        raise SystemExit(130)
+
+    if exc_holder:
+        print(f"\nError: fetch failed — {exc_holder[0]}")
+        print("Progress saved. Resume with:")
+        print(f"  python autobiographer.py fetch {plugin_id} --resume")
+        raise SystemExit(1)
 
 
 def main() -> None:
@@ -291,6 +404,12 @@ def main() -> None:
         dest="to_date",
         metavar="YYYY-MM-DD",
         help="Only fetch records on or before this date.",
+    )
+    fetch_parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="Resume an interrupted fetch from the last saved checkpoint.",
     )
 
     args = parser.parse_args()
