@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import plotly.express as px
 import streamlit as st
 from pandas import DataFrame
@@ -15,7 +17,9 @@ from analysis_utils import (
     get_top_entities,
     get_unique_entities,
 )
+from components.share import render_share_button
 from components.theme import COLORWAY, SEQUENTIAL_SCALE, apply_dark_theme
+from export_html import build_insights_page_html
 
 
 def render_insights_and_narrative(df: DataFrame) -> None:
@@ -52,6 +56,10 @@ def render_insights_and_narrative(df: DataFrame) -> None:
         filtered_df = filtered_df[filtered_df["country"] == selected_country]
     if selected_state != "All":
         filtered_df = filtered_df[filtered_df["state"] == selected_state]
+
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    html_bytes = build_insights_page_html(filtered_df, generated_at).encode("utf-8")
+    render_share_button(html_bytes, "autobiographer-insights.html")
 
     if filtered_df.empty:
         st.warning("No data found for the selected granular filters.")

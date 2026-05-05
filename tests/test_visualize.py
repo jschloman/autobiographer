@@ -272,9 +272,10 @@ class TestVisualize(unittest.TestCase):
             self.df["date_text"].max().date(),
         ]
         mock_cols.side_effect = [
-            [MagicMock(), MagicMock()],
-            [MagicMock(), MagicMock(), MagicMock()],
-            [MagicMock(), MagicMock()],
+            [MagicMock(), MagicMock()],  # share button (render_share_button)
+            [MagicMock(), MagicMock()],  # col_f1, col_f2 (artist/date filters)
+            [MagicMock(), MagicMock(), MagicMock()],  # col_a, col_b, col_c (sliders)
+            [MagicMock(), MagicMock()],  # fly_col1, fly_col2
         ]
         mock_slider.return_value = 3.0
 
@@ -349,10 +350,11 @@ class TestVisualize(unittest.TestCase):
     ) -> None:
         mock_select.return_value = "All"
         mock_cols.side_effect = [
-            [MagicMock()] * 4,
-            [MagicMock()] * 2,
-            [MagicMock()] * 2,
-            [MagicMock()] * 2,
+            [MagicMock()] * 4,  # filter columns
+            [MagicMock()] * 2,  # share button (render_share_button)
+            [MagicMock()] * 2,  # col_top1, col_top2
+            [MagicMock()] * 2,  # col_pat1, col_pat2
+            [MagicMock()] * 2,  # col_nar1, col_nar2
         ]
         mock_tabs.return_value = [MagicMock(), MagicMock(), MagicMock()]
 

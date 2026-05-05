@@ -6,6 +6,7 @@ import io
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,7 @@ import pydeck as pdk
 import streamlit as st
 from pandas import DataFrame
 
+from components.share import render_share_button
 from components.theme import (
     MAP_COLUMN_DEFAULT_RGBA,
     MAP_COUNTRY_BORDER_RGB,
@@ -22,6 +24,7 @@ from components.theme import (
     MAP_STATE_BORDER_RGBA,
     apply_dark_theme,
 )
+from export_html import build_checkin_insights_html, build_places_page_html
 
 
 def render_spatial_analysis(df: DataFrame) -> None:
@@ -40,6 +43,10 @@ def render_spatial_analysis(df: DataFrame) -> None:
             "No geographic data found. Please provide a Swarm data directory to enable this view."
         )
         return
+
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    html_bytes = build_places_page_html(df, generated_at).encode("utf-8")
+    render_share_button(html_bytes, "autobiographer-places.html")
 
     col_f1, col_f2 = st.columns(2)
     with col_f1:
@@ -385,6 +392,10 @@ def render_checkin_insights() -> None:
             "Configure the Swarm export directory in the sidebar."
         )
         return
+
+    generated_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    html_bytes = build_checkin_insights_html(swarm_df, generated_at).encode("utf-8")
+    render_share_button(html_bytes, "autobiographer-checkin-insights.html")
 
     # ── Countries ─────────────────────────────────────────────────────────────
     st.subheader("By Country")

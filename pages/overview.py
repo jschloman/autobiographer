@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import datetime
+from datetime import timezone
 
 import streamlit as st
 from pandas import DataFrame
 
+from components.share import render_share_button
 from components.theme import (
     ACCENT_CYAN,
     ACCENT_GREEN,
@@ -17,6 +19,7 @@ from components.theme import (
     ACCENT_YELLOW,
     TEXT_DIM,
 )
+from export_html import build_overview_page_html
 
 
 def _stat_html(value: str, label: str, color: str) -> str:
@@ -63,6 +66,10 @@ def render_overview() -> None:
             "Configure a Last.fm source in the sidebar and select a data file."
         )
         return
+
+    generated_at = datetime.datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    html_bytes = build_overview_page_html(df, swarm_df, generated_at).encode("utf-8")
+    render_share_button(html_bytes, "autobiographer-overview.html")
 
     # ── Last.fm stats ─────────────────────────────────────────────────────────
     total_scrobbles = len(df)

@@ -18,6 +18,7 @@ from analysis_utils import (
     get_listening_intensity,
     get_top_entities,
 )
+from components.share import render_share_button
 from components.theme import (
     ACCENT_INDIGO,
     AMBER,
@@ -381,12 +382,7 @@ def render_music() -> None:
 
     generated_at = datetime.datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     html_bytes = build_music_page_html(filtered, start, end, generated_at).encode("utf-8")
-    st.download_button(
-        label="Share this view",
-        data=html_bytes,
-        file_name=f"autobiographer-music-{start}-to-{end}.html",
-        mime="text/html",
-    )
+    render_share_button(html_bytes, f"autobiographer-music-{start}-to-{end}.html")
 
     prev_start, prev_end = _prev_period(start, end)
     prev = _filter_by_date(df, prev_start, prev_end)
