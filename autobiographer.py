@@ -46,6 +46,7 @@ class Autobiographer:
         to_ts: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         checkpoint: Optional[FetchCheckpoint] = None,
+        resume: bool = False,
         max_retries: int = 3,
     ) -> list[dict[str, Any]]:
         """Fetch recent tracks for the user.
@@ -57,9 +58,11 @@ class Autobiographer:
             to_ts: Unix timestamp upper bound (inclusive).
             progress_callback: Optional callable invoked after each page with
                 ``(current_page, total_pages)`` so callers can report progress.
-            checkpoint: Optional ``FetchCheckpoint`` for resume support. When
-                provided, already-fetched pages are skipped and each completed
-                page is saved so interrupted runs can be resumed.
+            checkpoint: Optional ``FetchCheckpoint`` for incremental saving.
+                When provided, each completed page is saved so interrupted
+                runs can be resumed.
+            resume: If ``True`` and a ``checkpoint`` is given, load prior
+                progress and continue from the last completed page.
             max_retries: Number of retry attempts per page on network error
                 (exponential backoff, default 3).
 
@@ -74,10 +77,10 @@ class Autobiographer:
         start_page = 1
         total_pages = 1
 
-        if checkpoint:
-            resume = checkpoint.load()
-            if resume is not None:
-                last_completed, prior_tracks = resume
+        if checkpoint and resume:
+            resume_data = checkpoint.load()
+            if resume_data is not None:
+                last_completed, prior_tracks = resume_data
                 all_tracks = list(prior_tracks)
                 start_page = last_completed + 1
 
@@ -245,17 +248,18 @@ def _run_fetch(args: argparse.Namespace) -> None:
     # Shift to-date to end of day so the full day is included.
     to_ts = to_ts_raw + 86399 if to_ts_raw is not None else None
 
-    checkpoint: Optional[FetchCheckpoint] = None
+    # Always create a checkpoint so every fetch can be resumed if interrupted.
+    identity = plugin.get_fetch_identity() or plugin_id
+    checkpoint = FetchCheckpoint(
+        checkpoint_dir="data/cache",
+        plugin_id=plugin_id,
+        identity=identity,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        pages_limit=args.pages,
+    )
+
     if args.resume:
-        identity = plugin.get_fetch_identity() or plugin_id
-        checkpoint = FetchCheckpoint(
-            checkpoint_dir="data/cache",
-            plugin_id=plugin_id,
-            identity=identity,
-            from_ts=from_ts,
-            to_ts=to_ts,
-            pages_limit=args.pages,
-        )
         try:
             resume_state = checkpoint.load()
         except ValueError as exc:
@@ -274,6 +278,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
     print(f"Fetching {plugin.DISPLAY_NAME} data...")
 
     exc_holder: list[Exception] = []
+    interrupted = False
 
     with Progress(
         SpinnerColumn(),
@@ -305,19 +310,22 @@ def _run_fetch(args: argparse.Namespace) -> None:
                 to_ts=to_ts,
                 progress_callback=update_progress,
                 checkpoint=checkpoint,
+                resume=args.resume,
             )
         except requests.exceptions.RequestException as exc:
             exc_holder.append(exc)
+        except KeyboardInterrupt:
+            interrupted = True
+
+    if interrupted:
+        print("\nFetch interrupted. Resume with:")
+        print(f"  python autobiographer.py fetch {plugin_id} --resume")
+        raise SystemExit(130)
 
     if exc_holder:
         print(f"\nError: fetch failed — {exc_holder[0]}")
-        if checkpoint is not None:
-            print(
-                f"Progress saved. Resume with:\n"
-                f"  python autobiographer.py fetch {plugin_id} --resume"
-            )
-        else:
-            print(f"Retry or resume with:\n  python autobiographer.py fetch {plugin_id} --resume")
+        print("Progress saved. Resume with:")
+        print(f"  python autobiographer.py fetch {plugin_id} --resume")
         raise SystemExit(1)
 
 

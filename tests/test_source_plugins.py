@@ -396,6 +396,7 @@ class TestFetchability(unittest.TestCase):
             to_ts=None,
             progress_callback=None,
             checkpoint=None,
+            resume=False,
             max_retries=3,
         )
         mock_client.save_tracks_to_csv.assert_called_once_with([], filename="/tmp/out.csv")

@@ -148,6 +148,7 @@ class LastFmPlugin(SourcePlugin):
             to_ts=kwargs.get("to_ts"),
             progress_callback=kwargs.get("progress_callback"),
             checkpoint=kwargs.get("checkpoint"),
+            resume=bool(kwargs.get("resume", False)),
             max_retries=kwargs.get("max_retries", 3),
         )
         client.save_tracks_to_csv(tracks, filename=save_path)

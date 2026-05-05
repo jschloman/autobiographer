@@ -197,7 +197,8 @@ class TestRunFetch(unittest.TestCase):
             from_ts=None,
             to_ts=None,
             progress_callback=unittest.mock.ANY,
-            checkpoint=None,
+            checkpoint=unittest.mock.ANY,
+            resume=False,
         )
 
     def test_to_date_shifted_to_end_of_day(self):
