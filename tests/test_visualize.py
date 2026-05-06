@@ -108,7 +108,7 @@ class TestPathInput(unittest.TestCase):
 
 
 class TestSidebarDataLoading(unittest.TestCase):
-    """Tests that the sidebar loads data and sets session state correctly."""
+    """Tests for render_sidebar and ensure_data_loaded session state management."""
 
     def test_render_sidebar_sets_df_none_when_no_file_path(self) -> None:
         """render_sidebar sets df=None when no Last.fm file is configured."""
@@ -123,7 +123,6 @@ class TestSidebarDataLoading(unittest.TestCase):
             patch("components.sidebar.load_builtin_plugins"),
             patch("components.sidebar.load_config_into_session_state"),
             patch("components.sidebar.get_plugin_config_from_session", return_value={}),
-            patch("components.sidebar.os.path.exists", return_value=False),
         ):
             from components.sidebar import render_sidebar
 
@@ -131,19 +130,40 @@ class TestSidebarDataLoading(unittest.TestCase):
 
         self.assertIsNone(session.get("df"))
 
-    def test_render_sidebar_stores_cache_hit_status(self) -> None:
-        """render_sidebar sets _cache_status='hit' when cached data is found."""
-        import pandas as pd
-
-        cached_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
-
-        plugin_instance = MagicMock()
-        plugin_instance.get_config_fields.return_value = [
+    def test_render_sidebar_publishes_current_config(self) -> None:
+        """render_sidebar stores _current_config so ensure_data_loaded can read it."""
+        plugin_cls = MagicMock(return_value=MagicMock())
+        plugin_cls.return_value.get_config_fields.return_value = [
             {"key": "data_path", "label": "CSV", "type": "file_path"}
         ]
-        plugin_cls = MagicMock(return_value=plugin_instance)
+        session: dict = {}
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
+            patch("components.sidebar.load_builtin_plugins"),
+            patch("components.sidebar.load_config_into_session_state"),
+            patch("components.sidebar.get_plugin_config_from_session", return_value={}),
+        ):
+            from components.sidebar import render_sidebar
 
-        session: dict = {"lastfm_data_path": "/some/file.csv"}
+            render_sidebar()
+
+        self.assertIn("_current_config", session)
+
+    def test_render_sidebar_skips_load_when_already_loaded(self) -> None:
+        """render_sidebar skips _load_data_with_progress when session cache is valid."""
+        import pandas as pd
+
+        raw_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
+        config = ("/path/to/file.csv", "", "default_assumptions.json")
+        plugin_cls = MagicMock(return_value=MagicMock())
+        plugin_cls.return_value.get_config_fields.return_value = [
+            {"key": "data_path", "label": "CSV", "type": "file_path"}
+        ]
+        session: dict = {
+            "_loaded_config": config,
+            "_raw_df": raw_df,
+        }
         with (
             patch("streamlit.session_state", session),
             patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
@@ -151,21 +171,89 @@ class TestSidebarDataLoading(unittest.TestCase):
             patch("components.sidebar.load_config_into_session_state"),
             patch(
                 "components.sidebar.get_plugin_config_from_session",
-                return_value={"data_path": "/some/file.csv"},
+                return_value={"data_path": "/path/to/file.csv"},
             ),
             patch("components.sidebar.os.path.exists", return_value=True),
-            patch("components.sidebar.load_assumptions", return_value={}),
-            patch("components.sidebar.get_cache_key", return_value="key"),
-            patch("components.sidebar.get_cached_data", return_value=cached_df),
+            patch("components.sidebar._load_data_with_progress") as mock_load,
             patch("streamlit.sidebar") as mock_sidebar,
         ):
             mock_sidebar.date_input.return_value = [
-                cached_df["date_text"].min().date(),
-                cached_df["date_text"].max().date(),
+                raw_df["date_text"].min().date(),
+                raw_df["date_text"].max().date(),
             ]
             from components.sidebar import render_sidebar
 
             render_sidebar()
+
+        mock_load.assert_not_called()
+
+    def test_render_sidebar_loads_when_config_changed(self) -> None:
+        """render_sidebar calls _load_data_with_progress when config differs from _loaded_config."""
+        import pandas as pd
+
+        raw_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
+        old_config = ("/old/file.csv", "", "default_assumptions.json")
+        new_path = "/new/file.csv"
+        plugin_cls = MagicMock(return_value=MagicMock())
+        plugin_cls.return_value.get_config_fields.return_value = [
+            {"key": "data_path", "label": "CSV", "type": "file_path"}
+        ]
+        session: dict = {
+            "_loaded_config": old_config,
+            "_raw_df": raw_df,
+        }
+
+        def fake_load(*_args: object) -> None:
+            session["_raw_df"] = raw_df
+
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar.REGISTRY", {"lastfm": plugin_cls}),
+            patch("components.sidebar.load_builtin_plugins"),
+            patch("components.sidebar.load_config_into_session_state"),
+            patch(
+                "components.sidebar.get_plugin_config_from_session",
+                return_value={"data_path": new_path},
+            ),
+            patch("components.sidebar.os.path.exists", return_value=True),
+            patch(
+                "components.sidebar._load_data_with_progress", side_effect=fake_load
+            ) as mock_load,
+            patch("streamlit.sidebar") as mock_sidebar,
+        ):
+            mock_sidebar.date_input.return_value = [
+                raw_df["date_text"].min().date(),
+                raw_df["date_text"].max().date(),
+            ]
+            from components.sidebar import render_sidebar
+
+            render_sidebar()
+
+        mock_load.assert_called_once()
+
+    def test_load_data_with_progress_sets_cache_hit_status(self) -> None:
+        """_load_data_with_progress sets _cache_status='hit' when cached data is found."""
+        import pandas as pd
+
+        cached_df = pd.DataFrame({"date_text": pd.to_datetime(["2024-01-01"])})
+        session: dict = {}
+
+        with (
+            patch("streamlit.session_state", session),
+            patch("components.sidebar.load_assumptions", return_value={}),
+            patch("components.sidebar.load_listening_data", return_value=cached_df),
+            patch("components.sidebar.os.path.exists", return_value=False),
+            patch("components.sidebar.get_cache_key", return_value="key"),
+            patch("components.sidebar.get_cached_data", return_value=cached_df),
+            patch("streamlit.status") as mock_status,
+            patch("streamlit.write"),
+        ):
+            mock_status.return_value.__enter__ = MagicMock(return_value=mock_status.return_value)
+            mock_status.return_value.__exit__ = MagicMock(return_value=False)
+
+            from components.sidebar import _load_data_with_progress
+
+            _load_data_with_progress("/some/file.csv", "", "default_assumptions.json")
 
         self.assertEqual(session.get("_cache_status"), "hit")
 

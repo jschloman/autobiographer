@@ -20,6 +20,7 @@ from components.plugin_config import (
     render_plugin_config_fields,
     settings,
 )
+from components.sidebar import invalidate_data_cache
 from core.fetch_utils import FetchCheckpoint
 from plugins.sources import REGISTRY, load_builtin_plugins
 from plugins.sources.base import _count_records_at_path
@@ -176,6 +177,7 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
                 st.session_state[session_key] = versioned_path
                 settings.set_plugin_value(plugin_id, primary_key, versioned_path)
 
+            invalidate_data_cache()
             fetch_status_ph.success(
                 f"Fetch complete — {record_count:,} records saved to `{versioned_path}`"
             )
@@ -210,6 +212,7 @@ def _render_plugin_tab(plugin_id: str, plugin: Any) -> dict[str, Any]:
                     primary_key = fields[0]["key"]
                     st.session_state[f"{plugin_id}_{primary_key}"] = fp
                     settings.set_plugin_value(plugin_id, primary_key, fp)
+                    invalidate_data_cache()
                     st.rerun()
 
     return health

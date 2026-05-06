@@ -2,6 +2,25 @@
 
 This document serves as the foundational mandate for all development work performed by AI agents on this codebase. This is a high-quality Python project; every contribution must uphold the following standards of simplicity, clarity, reliability, and performance.
 
+## Git Workflow
+
+*   **Branch first**: Always create a new feature branch before making changes; never push directly to an existing PR's branch unless explicitly told to.
+*   **Test before push**: After resolving conflicts or making multi-file changes, run the full test suite before pushing.
+*   **Verify branch target**: When pushing, confirm the branch name matches the intended PR target.
+
+## Python Environment
+
+*   **Use the venv**: Always activate the project venv (`venv/`) before running Python commands or installing packages; do not use system Python.
+*   **Verify installs**: After installing a package, confirm it landed in the venv with `which python` and `pip list` before assuming a fix worked.
+*   **pyproject.toml is canonical**: Any package imported in source must be listed in `pyproject.toml [project.dependencies]`. `requirements.txt` is for local venv convenience only — CI installs from `pyproject.toml`.
+
+## Streamlit Conventions
+
+*   **Widget mock lists**: When adding or removing `st.columns()` calls, update the corresponding `side_effect` lists in any affected tests.
+*   **Cache placement**: Do not apply `@st.cache_data` to pure utility modules; use it only on data-loading functions called from the UI layer.
+*   **Widget state refreshes**: For widget state changes (e.g., date pickers, config path fields), use explicit `session_state` keys and call `st.rerun()` when widget snapshots need refreshing — but be aware that `st.rerun()` inside a page function runs *before* `render_sidebar()` on the next pass, so never rely on a post-rerun sidebar state set by the page itself.
+*   **Session data cache**: When new data is saved (fetch or file selection), call `invalidate_data_cache()` from `components.sidebar` before `st.rerun()` so the next sidebar render reloads from disk.
+
 ## 1. Core Philosophy
 
 *   **Simplicity over Cleverness**: Write code that is easy to reason about. Avoid complex abstractions or "magic" patterns unless they provide significant performance gains.
