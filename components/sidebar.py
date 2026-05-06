@@ -1,21 +1,24 @@
-"""Shared sidebar component — config hydration, global date filter, and lazy data loading.
+"""Shared sidebar component — config hydration, lazy data loading, global date filter.
 
-Data loading is deliberately deferred out of ``render_sidebar()`` and into
-``ensure_data_loaded()``, which individual pages call at the top of their
-render functions.  This lets the navigation shell and sidebar config appear
-instantly on every page load; the slow file I/O only happens once per session
-(or when the configured data paths change), with a visible progress indicator.
+Data is loaded at most once per session, the first time ``render_sidebar()`` runs
+after the config (file paths) changes.  All subsequent reruns skip I/O and apply
+the date filter directly to the already-loaded ``_raw_df`` in session state.
 
 Session state contract
 ----------------------
-``_current_config``  : ``(file_path, swarm_dir, assumptions_path)`` tuple —
-                        written by ``render_sidebar()`` so pages can read it.
-``_loaded_config``   : same tuple — written by ``ensure_data_loaded()`` to
-                        mark that data was loaded for this config.
+``_current_config``  : ``(file_path, swarm_dir, assumptions_path)`` — written by
+                        ``render_sidebar()`` every run so pages can inspect it.
+``_loaded_config``   : same tuple — written after a successful data load to mark
+                        that ``_raw_df`` is current for this config.
 ``_raw_df``          : unfiltered merged DataFrame (Last.fm + Swarm offsets).
 ``swarm_df``         : raw Swarm checkins DataFrame, or None.
 ``df``               : date-filtered view of ``_raw_df`` for the active session.
 ``_cache_status``    : ``"hit"`` or ``"miss"`` — shown in Data Sources page.
+
+External invalidation
+---------------------
+When ``data_sources.py`` saves a new file (fetch or "Use" button), it must call
+``invalidate_data_cache()`` so the next ``render_sidebar()`` reloads from disk.
 """
 
 from __future__ import annotations
@@ -41,6 +44,16 @@ from components.plugin_config import (
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 _DEFAULT_ASSUMPTIONS = "default_assumptions.json"
+
+
+def invalidate_data_cache() -> None:
+    """Drop the in-session data cache so the next sidebar render reloads from disk.
+
+    Call this from ``data_sources.py`` whenever a new file is fetched or the
+    active file path is changed via the "Use" history button.
+    """
+    st.session_state.pop("_loaded_config", None)
+    st.session_state.pop("_raw_df", None)
 
 
 def _resolve_configs() -> tuple[str, str, str]:
@@ -116,41 +129,13 @@ def _load_data_with_progress(
     st.session_state["swarm_df"] = swarm_df if not swarm_df.empty else None
 
 
-def ensure_data_loaded() -> None:
-    """Ensure data is loaded in session state; load with progress if not.
-
-    Call this at the top of every page function that displays data.  On the
-    first visit (or after a config change) it shows a step-by-step status
-    widget while reading files, then calls ``st.rerun()`` so the sidebar date
-    filter can render with the correct date bounds.  On all subsequent reruns
-    within the same session it is a cheap no-op.
-    """
-    current_config: tuple[str, str, str] = st.session_state.get(
-        "_current_config", ("", "", _DEFAULT_ASSUMPTIONS)
-    )
-    file_path, _swarm_dir, _assumptions_path = current_config
-
-    if not file_path or not os.path.exists(file_path):
-        return
-
-    already_loaded = (
-        st.session_state.get("_loaded_config") == current_config
-        and st.session_state.get("_raw_df") is not None
-    )
-    if already_loaded:
-        return
-
-    _load_data_with_progress(*current_config)
-    st.session_state["_loaded_config"] = current_config
-    st.rerun()
-
-
 def render_sidebar() -> None:
-    """Hydrate config, publish ``_current_config``, and render the date filter.
+    """Hydrate config, load data if needed, and render the global date filter.
 
-    Data loading is **not** performed here — pages call ``ensure_data_loaded()``
-    instead.  The date filter only appears after data has been loaded into
-    ``st.session_state['_raw_df']`` by a prior call to ``ensure_data_loaded()``.
+    Data is loaded (with a progress widget) the first time this runs after the
+    configured file paths change.  On subsequent reruns the data is read from
+    ``st.session_state['_raw_df']`` — no disk I/O — making filter interactions
+    instant.
 
     Populates:
         ``st.session_state["_current_config"]`` — the active config tuple.
@@ -170,6 +155,16 @@ def render_sidebar() -> None:
         st.session_state["df"] = None
         st.session_state["swarm_df"] = None
         return
+
+    already_loaded = (
+        st.session_state.get("_loaded_config") == current_config
+        and st.session_state.get("_raw_df") is not None
+    )
+
+    if not already_loaded:
+        _load_data_with_progress(file_path, swarm_dir, assumptions_path)
+        if st.session_state.get("_raw_df") is not None:
+            st.session_state["_loaded_config"] = current_config
 
     raw_df: pd.DataFrame | None = st.session_state.get("_raw_df")
 

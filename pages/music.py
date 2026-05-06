@@ -363,10 +363,6 @@ def render_music() -> None:
     Reads the active DataFrame from ``st.session_state['df']``.
     Shows an empty state when no data has been loaded.
     """
-    from components.sidebar import ensure_data_loaded
-
-    ensure_data_loaded()
-
     df = st.session_state.get("df")
     if df is None or df.empty:
         st.info(
