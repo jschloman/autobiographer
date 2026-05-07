@@ -35,6 +35,7 @@ from pages.music import (
 )
 from pages.overview import render_overview
 from pages.places import render_spatial_analysis
+from pages.vacation_mode import render_vacation_mode
 from visualize import main
 
 
@@ -633,6 +634,48 @@ class TestMusicHelpers(unittest.TestCase):
         st.session_state["df"] = None
         render_music()
         mock_info.assert_called_once()
+
+    @patch("streamlit.info")
+    def test_render_vacation_mode_empty_state(self, mock_info: MagicMock) -> None:
+        with patch("streamlit.session_state", {"df": None}):
+            render_vacation_mode()
+        mock_info.assert_called_once()
+
+    @patch("streamlit.warning")
+    @patch("streamlit.caption")
+    @patch("streamlit.subheader")
+    @patch("streamlit.header")
+    @patch("streamlit.info")
+    @patch("streamlit.columns")
+    @patch("streamlit.metric")
+    @patch("streamlit.container")
+    def test_render_vacation_mode_no_trips(
+        self,
+        mock_container: MagicMock,
+        mock_metric: MagicMock,
+        mock_cols: MagicMock,
+        mock_info: MagicMock,
+        mock_header: MagicMock,
+        mock_subheader: MagicMock,
+        mock_caption: MagicMock,
+        mock_warning: MagicMock,
+    ) -> None:
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_container.return_value = ctx
+        mock_cols.return_value = [ctx, ctx]
+
+        session = {
+            "df": self._make_df(),
+            "assumptions": {"trips": [], "defaults": {"city": "Reykjavik, IS"}},
+            "swarm_df": None,
+        }
+        with patch("streamlit.session_state", session):
+            render_vacation_mode()
+
+        mock_header.assert_called_with("Vacation Mode")
+        mock_warning.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@ import unittest
 import pandas as pd
 
 from analysis_utils import (
+    compute_vacation_stats,
+    detect_trip_periods,
     get_artist_monthly_ranks,
     get_cumulative_plays,
     get_day_hour_heatmap,
@@ -14,6 +16,7 @@ from analysis_utils import (
     get_listening_streaks,
     get_milestones,
     get_top_entities,
+    label_listening_context,
     load_listening_data,
 )
 
@@ -185,6 +188,202 @@ class TestAnalysisUtils(unittest.TestCase):
         empty = pd.DataFrame(columns=["artist", "date_text"])
         result = get_artist_monthly_ranks(empty)
         self.assertTrue(result.empty)
+
+
+class TestDetectTripPeriods(unittest.TestCase):
+    """Tests for detect_trip_periods."""
+
+    def _assumptions_with_trips(self) -> dict:
+        return {
+            "trips": [
+                {"start": "2021-03-01", "end": "2021-03-07", "city": "Paris"},
+                {"start": "2021-06-10", "end": "2021-06-15", "city": "Tokyo"},
+            ],
+            "defaults": {"city": "Reykjavik, IS"},
+        }
+
+    def test_returns_assumption_trips(self) -> None:
+        assumptions = self._assumptions_with_trips()
+        periods = detect_trip_periods(assumptions)
+        self.assertEqual(len(periods), 2)
+        self.assertEqual(periods[0][0], pd.Timestamp("2021-03-01"))
+        self.assertEqual(periods[0][1], pd.Timestamp("2021-03-07"))
+
+    def test_empty_trips_returns_empty(self) -> None:
+        periods = detect_trip_periods({"trips": [], "defaults": {"city": "Home City"}})
+        self.assertEqual(periods, [])
+
+    def test_detects_swarm_away_days(self) -> None:
+        # 3 consecutive away days should produce one trip period
+        swarm_df = pd.DataFrame(
+            {
+                "timestamp": [
+                    int(pd.Timestamp("2021-04-01").timestamp()),
+                    int(pd.Timestamp("2021-04-02").timestamp()),
+                    int(pd.Timestamp("2021-04-03").timestamp()),
+                ],
+                "city": ["Amsterdam", "Amsterdam", "Amsterdam"],
+            }
+        )
+        assumptions = {"trips": [], "defaults": {"city": "Reykjavik, IS"}}
+        periods = detect_trip_periods(assumptions, swarm_df=swarm_df, home_city="Reykjavik, IS")
+        self.assertEqual(len(periods), 1)
+        self.assertEqual(periods[0][0], pd.Timestamp("2021-04-01"))
+        self.assertEqual(periods[0][1], pd.Timestamp("2021-04-03"))
+
+    def test_single_away_day_below_threshold_excluded(self) -> None:
+        swarm_df = pd.DataFrame(
+            {
+                "timestamp": [int(pd.Timestamp("2021-04-01").timestamp())],
+                "city": ["Amsterdam"],
+            }
+        )
+        assumptions = {"trips": [], "defaults": {"city": "Reykjavik, IS"}}
+        periods = detect_trip_periods(
+            assumptions, swarm_df=swarm_df, home_city="Reykjavik, IS", min_consecutive_days=2
+        )
+        self.assertEqual(periods, [])
+
+    def test_swarm_home_checkins_excluded(self) -> None:
+        # All swarm check-ins are in home city — no trips detected
+        swarm_df = pd.DataFrame(
+            {
+                "timestamp": [
+                    int(pd.Timestamp("2021-04-01").timestamp()),
+                    int(pd.Timestamp("2021-04-02").timestamp()),
+                    int(pd.Timestamp("2021-04-03").timestamp()),
+                ],
+                "city": ["Reykjavik, IS", "Reykjavik, IS", "Reykjavik, IS"],
+            }
+        )
+        assumptions = {"trips": [], "defaults": {"city": "Reykjavik, IS"}}
+        periods = detect_trip_periods(assumptions, swarm_df=swarm_df, home_city="Reykjavik, IS")
+        self.assertEqual(periods, [])
+
+    def test_sorted_output(self) -> None:
+        assumptions = {
+            "trips": [
+                {"start": "2021-06-10", "end": "2021-06-15", "city": "Tokyo"},
+                {"start": "2021-03-01", "end": "2021-03-07", "city": "Paris"},
+            ],
+            "defaults": {"city": "Reykjavik, IS"},
+        }
+        periods = detect_trip_periods(assumptions)
+        self.assertLessEqual(periods[0][0], periods[1][0])
+
+    def test_malformed_trip_skipped(self) -> None:
+        assumptions = {
+            "trips": [
+                {"start": "not-a-date", "end": "2021-03-07"},
+                {"start": "2021-05-01", "end": "2021-05-05", "city": "London"},
+            ],
+            "defaults": {"city": "Reykjavik, IS"},
+        }
+        periods = detect_trip_periods(assumptions)
+        # Only the valid trip should be returned
+        self.assertEqual(len(periods), 1)
+        self.assertEqual(periods[0][0], pd.Timestamp("2021-05-01"))
+
+
+class TestLabelListeningContext(unittest.TestCase):
+    """Tests for label_listening_context."""
+
+    def _make_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B", "C", "D"],
+                "date_text": pd.to_datetime(
+                    ["2021-03-01", "2021-03-05", "2021-03-10", "2021-03-15"]
+                ),
+            }
+        )
+        return df
+
+    def test_labels_trip_rows_correctly(self) -> None:
+        df = self._make_df()
+        periods = [(pd.Timestamp("2021-03-03"), pd.Timestamp("2021-03-07"))]
+        result = label_listening_context(df, periods)
+        self.assertIn("context", result.columns)
+        self.assertEqual(result.iloc[0]["context"], "home")
+        self.assertEqual(result.iloc[1]["context"], "trip")
+        self.assertEqual(result.iloc[2]["context"], "home")
+
+    def test_no_periods_all_home(self) -> None:
+        df = self._make_df()
+        result = label_listening_context(df, [])
+        self.assertTrue((result["context"] == "home").all())
+
+    def test_empty_df_returns_with_context_column(self) -> None:
+        result = label_listening_context(pd.DataFrame(), [])
+        self.assertIn("context", result.columns)
+        self.assertTrue(result.empty)
+
+    def test_multiple_periods(self) -> None:
+        df = self._make_df()
+        periods = [
+            (pd.Timestamp("2021-03-01"), pd.Timestamp("2021-03-01")),
+            (pd.Timestamp("2021-03-15"), pd.Timestamp("2021-03-15")),
+        ]
+        result = label_listening_context(df, periods)
+        self.assertEqual(result.iloc[0]["context"], "trip")
+        self.assertEqual(result.iloc[1]["context"], "home")
+        self.assertEqual(result.iloc[3]["context"], "trip")
+
+
+class TestComputeVacationStats(unittest.TestCase):
+    """Tests for compute_vacation_stats."""
+
+    def _make_labeled_df(self) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B", "A", "C", "D"],
+                "date_text": pd.to_datetime(
+                    ["2021-01-01", "2021-01-02", "2021-01-03", "2021-01-04", "2021-01-05"]
+                ),
+                "context": ["home", "home", "trip", "trip", "home"],
+            }
+        )
+        return df
+
+    def test_returns_both_contexts(self) -> None:
+        df = self._make_labeled_df()
+        stats = compute_vacation_stats(df)
+        self.assertIn("home", stats)
+        self.assertIn("trip", stats)
+
+    def test_avg_daily_scrobbles_correct(self) -> None:
+        df = self._make_labeled_df()
+        stats = compute_vacation_stats(df)
+        # Home: rows 0 (2021-01-01), 1 (2021-01-02), 4 (2021-01-05) → 3 plays over 3 days → 1.0
+        self.assertEqual(stats["home"]["avg_daily_scrobbles"], 1.0)
+        # Trip: rows 2 (2021-01-03), 3 (2021-01-04) → 2 plays over 2 days → 1.0
+        self.assertEqual(stats["trip"]["avg_daily_scrobbles"], 1.0)
+
+    def test_top_artist_identified(self) -> None:
+        df = self._make_labeled_df()
+        stats = compute_vacation_stats(df)
+        self.assertEqual(stats["home"]["top_artist"], "A")
+
+    def test_empty_df_returns_empty_dict(self) -> None:
+        stats = compute_vacation_stats(pd.DataFrame())
+        self.assertEqual(stats, {})
+
+    def test_missing_context_column_returns_empty(self) -> None:
+        df = pd.DataFrame({"artist": ["A"], "date_text": pd.to_datetime(["2021-01-01"])})
+        stats = compute_vacation_stats(df)
+        self.assertEqual(stats, {})
+
+    def test_single_context_returns_empty_for_missing(self) -> None:
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B"],
+                "date_text": pd.to_datetime(["2021-01-01", "2021-01-02"]),
+                "context": ["home", "home"],
+            }
+        )
+        stats = compute_vacation_stats(df)
+        self.assertIn("home", stats)
+        self.assertEqual(stats.get("trip"), {})
 
 
 if __name__ == "__main__":
