@@ -30,6 +30,7 @@ from pages.places import (  # noqa: F401
     render_places,
     render_spatial_analysis,
 )
+from pages.yearly_retrospective import render_yearly_retrospective
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 load_dotenv()
@@ -125,6 +126,11 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
+                st.Page(
+                    render_yearly_retrospective,
+                    title="Year in Review",
+                    icon=":material/calendar_month:",
+                ),
             ],
             "Places": [
                 st.Page(render_places, title="Check-ins", icon=":material/location_on:"),
