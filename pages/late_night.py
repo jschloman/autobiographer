@@ -417,7 +417,7 @@ def _render_latest_session(df: pd.DataFrame) -> None:
     <p style="color: #f0f4ff; font-size: 1.1rem; margin: 0.25rem 0;">
         <strong>{start_str} – {end_str}</strong>
         &nbsp;&middot;&nbsp;
-        {session['track_count']} tracks
+        {session["track_count"]} tracks
         &nbsp;&middot;&nbsp;
         {duration_min} min
     </p>
