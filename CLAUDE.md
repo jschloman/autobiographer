@@ -14,6 +14,10 @@ This document serves as the foundational mandate for all development work perfor
 *   **Verify installs**: After installing a package, confirm it landed in the venv with `which python` and `pip list` before assuming a fix worked.
 *   **pyproject.toml is canonical**: Any package imported in source must be listed in `pyproject.toml [project.dependencies]`. `requirements.txt` is for local venv convenience only — CI installs from `pyproject.toml`.
 
+## Streamlit API deprecations
+
+*   **`use_container_width` is removed**: Use `width="stretch"` instead of `use_container_width=True`, and `width="content"` instead of `use_container_width=False`. Never write `use_container_width` — it was removed after 2025-12-31.
+
 ## Streamlit Conventions
 
 *   **Widget mock lists**: When adding or removing `st.columns()` calls, update the corresponding `side_effect` lists in any affected tests.

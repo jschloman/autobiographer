@@ -150,6 +150,47 @@ class TestFilterUsStates:
         result = _filter_us_states(pd.DataFrame())
         assert result.empty
 
+    def test_normalises_city_state_strings(self) -> None:
+        """'City, ST' values produced by the city fallback should be recognised."""
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B"],
+                "album": ["X", "Y"],
+                "track": ["t1", "t2"],
+                "timestamp": [1610000000, 1610000100],
+                "date_text": pd.to_datetime(["2021-01-01", "2021-01-01"]),
+                "state": ["Anchorage, AK", "Chicago, IL"],
+                "country": ["US", "US"],
+                "lat": [61.2, 41.8],
+                "lng": [-149.9, -87.6],
+                "city": ["Anchorage, AK", "Chicago, IL"],
+            }
+        )
+        result = _filter_us_states(df)
+        assert len(result) == 2
+        assert set(result["state"].tolist()) == {"AK", "IL"}
+
+    def test_normalises_full_state_names(self) -> None:
+        """Full state names from reverse_geocoder admin1 should be normalised."""
+        df = pd.DataFrame(
+            {
+                "artist": ["A", "B", "C"],
+                "album": ["X", "Y", "Z"],
+                "track": ["t1", "t2", "t3"],
+                "timestamp": [1610000000, 1610000100, 1610000200],
+                "date_text": pd.to_datetime(["2021-01-01"] * 3),
+                "state": ["Oklahoma", "New York", "Ontario"],
+                "country": ["US", "US", "Canada"],
+                "lat": [35.5, 40.7, 43.7],
+                "lng": [-97.5, -74.0, -79.4],
+                "city": ["Oklahoma City", "New York", "Toronto"],
+            }
+        )
+        result = _filter_us_states(df)
+        assert len(result) == 2
+        assert set(result["state"].tolist()) == {"OK", "NY"}
+        assert "Ontario" not in result["state"].values
+
 
 # ---------------------------------------------------------------------------
 # Unit tests for _build_state_stats
@@ -203,6 +244,25 @@ class TestBuildStateStats:
         il_row = stats.loc[stats["state"] == "IL"].iloc[0]
         # IL has 3 plays all by Artist A — list should have at most 5 entries
         assert len(il_row["top_artists_list"]) <= 5
+
+    def test_top_tracks_list_column_present(self) -> None:
+        df = _make_df()
+        stats = _build_state_stats(df)
+        assert "top_tracks_list" in stats.columns
+
+    def test_top_tracks_list_contains_artist_and_track(self) -> None:
+        df = _make_df()
+        stats = _build_state_stats(df)
+        il_row = stats.loc[stats["state"] == "IL"].iloc[0]
+        assert len(il_row["top_tracks_list"]) >= 1
+        # Each entry should contain " — " separating artist from track
+        assert " — " in il_row["top_tracks_list"][0]
+
+    def test_top_tracks_list_at_most_five(self) -> None:
+        df = _make_df()
+        stats = _build_state_stats(df)
+        for _, row in stats.iterrows():
+            assert len(row["top_tracks_list"]) <= 5
 
 
 # ---------------------------------------------------------------------------

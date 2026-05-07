@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -71,8 +73,92 @@ _US_STATE_ABBREVS: frozenset[str] = frozenset(
 )
 
 
+_CITY_STATE_RE = re.compile(r",\s*([A-Z]{2})$")
+
+# Full US state/territory names → abbreviations (covers reverse_geocoder admin1 output
+# and Foursquare GDPR exports that return the full state name).
+_STATE_NAME_TO_ABBREV: dict[str, str] = {
+    "alabama": "AL",
+    "alaska": "AK",
+    "arizona": "AZ",
+    "arkansas": "AR",
+    "california": "CA",
+    "colorado": "CO",
+    "connecticut": "CT",
+    "delaware": "DE",
+    "district of columbia": "DC",
+    "florida": "FL",
+    "georgia": "GA",
+    "hawaii": "HI",
+    "idaho": "ID",
+    "illinois": "IL",
+    "indiana": "IN",
+    "iowa": "IA",
+    "kansas": "KS",
+    "kentucky": "KY",
+    "louisiana": "LA",
+    "maine": "ME",
+    "maryland": "MD",
+    "massachusetts": "MA",
+    "michigan": "MI",
+    "minnesota": "MN",
+    "mississippi": "MS",
+    "missouri": "MO",
+    "montana": "MT",
+    "nebraska": "NE",
+    "nevada": "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    "ohio": "OH",
+    "oklahoma": "OK",
+    "oregon": "OR",
+    "pennsylvania": "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    "tennessee": "TN",
+    "texas": "TX",
+    "utah": "UT",
+    "vermont": "VT",
+    "virginia": "VA",
+    "washington": "WA",
+    "west virginia": "WV",
+    "wisconsin": "WI",
+    "wyoming": "WY",
+}
+
+
+def _extract_state_abbrev(value: str) -> str:
+    """Return the US state abbreviation from *value*.
+
+    Handles three formats:
+    - Bare abbreviation: ``"IL"``
+    - Full state name (from ``reverse_geocoder`` admin1 or Foursquare GDPR export):
+      ``"Oklahoma"``, ``"New York"``
+    - City-state string (assumptions fallback when no explicit ``state`` key):
+      ``"Anchorage, AK"``
+    """
+    if value in _US_STATE_ABBREVS:
+        return value
+    lower = value.lower()
+    if lower in _STATE_NAME_TO_ABBREV:
+        return _STATE_NAME_TO_ABBREV[lower]
+    m = _CITY_STATE_RE.search(value)
+    if m and m.group(1) in _US_STATE_ABBREVS:
+        return m.group(1)
+    return value
+
+
 def _filter_us_states(df: pd.DataFrame) -> pd.DataFrame:
     """Return only rows whose ``state`` column matches a US state abbreviation.
+
+    Normalises ``"City, ST"`` values (common when assumptions entries lack an
+    explicit ``state`` key) before filtering, and rewrites the ``state`` column
+    so downstream code always sees bare abbreviations.
 
     Args:
         df: Listening history DataFrame, optionally containing a ``state`` column.
@@ -83,8 +169,11 @@ def _filter_us_states(df: pd.DataFrame) -> pd.DataFrame:
     """
     if df.empty or "state" not in df.columns:
         return pd.DataFrame()
-    mask = df["state"].isin(_US_STATE_ABBREVS)
-    return df[mask].copy()
+    normalised = df["state"].astype(str).map(_extract_state_abbrev)
+    mask = normalised.isin(_US_STATE_ABBREVS)
+    result = df[mask].copy()
+    result["state"] = normalised[mask]
+    return result
 
 
 def _build_state_stats(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,7 +184,8 @@ def _build_state_stats(df: pd.DataFrame) -> pd.DataFrame:
     - ``plays`` — total scrobble count.
     - ``top_artist`` — most-played artist in the state.
     - ``top_artists_list`` — ordered list of up to 5 top artists (with play counts).
-    - ``top_track`` — most-played track in the state.
+    - ``top_track`` — most-played track name (for hover tooltip).
+    - ``top_tracks_list`` — ordered list of up to 5 "Artist — Track (N)" strings.
 
     Args:
         df: Listening history filtered to US rows (via :func:`_filter_us_states`).
@@ -119,8 +209,18 @@ def _build_state_stats(df: pd.DataFrame) -> pd.DataFrame:
             else []
         )
 
-        top_tracks_df = get_top_entities(group, "track", limit=1)
-        top_track = top_tracks_df.iloc[0]["track"] if not top_tracks_df.empty else "—"
+        # Top tracks grouped by (artist, track) so each entry carries its artist.
+        if "artist" in group.columns and "track" in group.columns:
+            track_counts = group.groupby(["artist", "track"]).size().reset_index(name="plays_t")
+            track_counts = track_counts.sort_values("plays_t", ascending=False).head(5)
+            top_track = track_counts.iloc[0]["track"] if not track_counts.empty else "—"
+            top_tracks_list = [
+                f"{r['artist']} — {r['track']} ({int(r['plays_t'])})"
+                for _, r in track_counts.iterrows()
+            ]
+        else:
+            top_track = "—"
+            top_tracks_list = []
 
         rows.append(
             {
@@ -129,6 +229,7 @@ def _build_state_stats(df: pd.DataFrame) -> pd.DataFrame:
                 "top_artist": top_artist,
                 "top_artists_list": top_artists_list,
                 "top_track": top_track,
+                "top_tracks_list": top_tracks_list,
             }
         )
 
@@ -150,7 +251,8 @@ def _build_share_html(stats: pd.DataFrame, total_plays: int) -> str:
     """
     rows_html = "".join(
         f"<tr><td>{r['state']}</td><td>{r['plays']:,}</td>"
-        f"<td>{r['top_artist']}</td><td>{r['top_track']}</td></tr>"
+        f"<td>{r['top_artist']}</td>"
+        f"<td>{r['top_tracks_list'][0] if r['top_tracks_list'] else '—'}</td></tr>"
         for _, r in stats.iterrows()
     )
     return f"""<!DOCTYPE html>
@@ -276,8 +378,9 @@ def render_music_map_america() -> None:
             for entry in row["top_artists_list"]:
                 st.markdown(f"- {entry}")
         with col_right:
-            st.markdown("**Top Track**")
-            st.markdown(f"> {row['top_track']}")
+            st.markdown("**Top 5 Tracks**")
+            for entry in row["top_tracks_list"]:
+                st.markdown(f"- {entry}")
 
     # ── Sortable state table ──────────────────────────────────────────────────
     st.subheader("All Visited States")
@@ -289,4 +392,4 @@ def render_music_map_america() -> None:
             "top_track": "Top Track",
         }
     )
-    st.dataframe(display_df, hide_index=True, use_container_width=True)
+    st.dataframe(display_df, hide_index=True, width="stretch")

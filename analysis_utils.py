@@ -30,7 +30,7 @@ def get_cache_key(
         key_parts.append(str(os.path.getmtime(assumptions_file)))
 
     # Include version to invalidate cache if logic changes
-    key_parts.append("v1.5")
+    key_parts.append("v1.6")
 
     return hashlib.md5("".join(key_parts).encode(), usedforsecurity=False).hexdigest()  # noqa: S324
 
