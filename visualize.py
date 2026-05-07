@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 import components.theme  # registers autobio_dark Plotly template as default  # noqa: F401
 from components.sidebar import render_sidebar
+from pages.artist_geography import render_artist_geography
 from pages.beer import render_beer
 from pages.culture import render_culture
 from pages.data_sources import render_data_sources, render_plugin_page
@@ -125,6 +126,11 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
+                st.Page(
+                    render_artist_geography,
+                    title="Artist Geography",
+                    icon=":material/pin_drop:",
+                ),
             ],
             "Places": [
                 st.Page(render_places, title="Check-ins", icon=":material/location_on:"),
