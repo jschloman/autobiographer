@@ -363,7 +363,8 @@ class TestVisualize(unittest.TestCase):
             [MagicMock(), MagicMock()],  # share button (render_share_button)
             [MagicMock(), MagicMock()],  # col_f1, col_f2 (artist/date filters)
             [MagicMock(), MagicMock(), MagicMock()],  # col_a, col_b, col_c (sliders)
-            [MagicMock(), MagicMock()],  # fly_col1, fly_col2
+            [MagicMock(), MagicMock()],  # path_col, browse_col (output path + browse)
+            [MagicMock(), MagicMock()],  # rec_col, exp_col (record + export buttons)
         ]
         mock_slider.return_value = 3.0
 

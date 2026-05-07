@@ -5,7 +5,9 @@ from __future__ import annotations
 import io
 import json
 import os
-import time
+import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 
 import numpy as np
@@ -25,6 +27,77 @@ from components.theme import (
     apply_dark_theme,
 )
 from export_html import build_checkin_insights_html, build_places_page_html
+
+_RECORD_SCRIPT = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "record_flythrough.py")
+)
+
+
+def _build_flythrough_filename(selected_artist: str, date_range: tuple) -> str:
+    """Build a default .mp4 filename encoding the current recording settings.
+
+    Args:
+        selected_artist: Currently selected artist filter, or ``"All"``.
+        date_range: Tuple/list of one or two ``datetime.date`` values.
+
+    Returns:
+        Filename string of the form
+        ``flythrough_YYYYMMDD_HHMMSS[_artist][_start_end].mp4``.
+    """
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    parts = [ts]
+    if selected_artist != "All":
+        safe = re.sub(r"[^\w\-]", "_", selected_artist, flags=re.ASCII)[:30]
+        parts.append(safe)
+    if len(date_range) == 2:
+        parts.append(date_range[0].strftime("%Y%m%d"))
+        parts.append(date_range[1].strftime("%Y%m%d"))
+    return "flythrough_" + "_".join(parts) + ".mp4"
+
+
+def _open_save_dialog(initial_filename: str) -> str | None:
+    """Open a native file-save dialog and return the chosen path.
+
+    Uses tkinter in a background thread so the Streamlit server thread is not
+    permanently blocked.  Returns ``None`` when the user cancels or tkinter is
+    unavailable.
+
+    Args:
+        initial_filename: Pre-filled filename shown in the dialog.
+
+    Returns:
+        Absolute path chosen by the user, or ``None``.
+    """
+    try:
+        import threading
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return None
+
+    result: list[str] = []
+
+    def _run() -> None:
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.wm_attributes("-topmost", 1)
+        except Exception:  # noqa: S110 — not available on all platforms
+            pass
+        path = filedialog.asksaveasfilename(
+            title="Save flythrough recording",
+            defaultextension=".mp4",
+            filetypes=[("MP4 video", "*.mp4"), ("All files", "*.*")],
+            initialfile=initial_filename,
+        )
+        root.destroy()
+        if path:
+            result.append(path)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join()
+    return result[0] if result else None
 
 
 def render_spatial_analysis(df: DataFrame) -> None:
@@ -93,7 +166,7 @@ def render_spatial_analysis(df: DataFrame) -> None:
 
     with col_a:
         zoom_level = st.slider(
-            "Map Zoom",
+            "Marker Zoom",
             min_value=1.0,
             max_value=15.0,
             value=get_view_val("zoom", 3.0),
@@ -124,29 +197,35 @@ def render_spatial_analysis(df: DataFrame) -> None:
     st.session_state.spatial_view_state.pitch = pitch
 
     st.subheader("Cinematic Fly-through")
-    fly_col1, fly_col2 = st.columns([1, 3])
-    with fly_col1:
-        if st.button("Play Fly-through"):
-            top_cities = geo_data.sort_values("Plays", ascending=False).head(5)
-            keyframes = []
-            for _, row in top_cities.iterrows():
-                keyframes.append(
-                    {"lat": row["lat"], "lng": row["lng"], "zoom": 12, "pitch": 60, "bearing": 30}
-                )
-            keyframes.append(
-                {
-                    "lat": geo_data["lat"].mean(),
-                    "lng": geo_data["lng"].mean(),
-                    "zoom": 2,
-                    "pitch": 0,
-                    "bearing": 0,
-                }
-            )
-            st.session_state.fly_keyframes = keyframes
-            st.session_state.fly_index = 0
-            st.rerun()
 
-    with fly_col2:
+    # ── Output path ────────────────────────────────────────────────────────────
+    if "flythrough_output_path" not in st.session_state:
+        st.session_state["flythrough_output_path"] = _build_flythrough_filename(
+            selected_artist, date_range
+        )
+
+    path_col, browse_col = st.columns([4, 1])
+    with path_col:
+        st.text_input(
+            "Output file",
+            key="flythrough_output_path",
+            help="Full path where the .mp4 recording will be saved.",
+        )
+    with browse_col:
+        st.write("")
+        if st.button("Browse…", key="flythrough_browse"):
+            chosen = _open_save_dialog(
+                str(st.session_state.get("flythrough_output_path", "flythrough.mp4"))
+            )
+            if chosen:
+                st.session_state["flythrough_output_path"] = chosen
+                st.rerun()
+
+    # ── Action buttons ─────────────────────────────────────────────────────────
+    rec_col, exp_col = st.columns([1, 1])
+    with rec_col:
+        record_clicked = st.button("▶ Record Flythrough", type="primary")
+    with exp_col:
         if st.button("Export Recording HTML"):
             top_cities = geo_data.sort_values("Plays", ascending=False).head(8)
             export_keyframes: list[dict[str, float | int]] = [
@@ -232,26 +311,47 @@ def render_spatial_analysis(df: DataFrame) -> None:
                 mime="text/html",
             )
 
-    if "fly_keyframes" in st.session_state and st.session_state.fly_index < len(
-        st.session_state.fly_keyframes
-    ):
-        kf = st.session_state.fly_keyframes[st.session_state.fly_index]
-        st.session_state.spatial_view_state = pdk.ViewState(
-            latitude=kf["lat"],
-            longitude=kf["lng"],
-            zoom=kf["zoom"],
-            pitch=kf["pitch"],
-            bearing=kf["bearing"],
-            transition_duration=3000,
-            transition_interp="FLY_TO",
-        )
-        st.session_state.fly_index += 1
-        time.sleep(3.2)
-        st.rerun()
-    elif "fly_keyframes" in st.session_state:
-        del st.session_state.fly_keyframes
-        del st.session_state.fly_index
-        st.success("Fly-through complete!")
+    # ── Subprocess recording with live log ─────────────────────────────────────
+    if record_clicked:
+        out_path = str(st.session_state.get("flythrough_output_path") or "flythrough.mp4")
+        loaded_config = st.session_state.get("_loaded_config")
+        csv_path = loaded_config[0] if loaded_config else None
+        swarm_dir_cfg = loaded_config[1] if loaded_config else None
+        assumptions_cfg = loaded_config[2] if loaded_config else None
+
+        cmd: list[str] = [sys.executable, _RECORD_SCRIPT]
+        if csv_path:
+            cmd.append(csv_path)
+        cmd.extend(["--output", out_path])
+        cmd.extend(["--marker_zoom", str(zoom_level)])
+        if selected_artist != "All":
+            cmd.extend(["--artist", selected_artist])
+        if len(date_range) == 2:
+            cmd.extend(["--start_date", date_range[0].isoformat()])
+            cmd.extend(["--end_date", date_range[1].isoformat()])
+        if swarm_dir_cfg:
+            cmd.extend(["--swarm_dir", swarm_dir_cfg])
+        if assumptions_cfg:
+            cmd.extend(["--assumptions", assumptions_cfg])
+
+        with st.status("Recording flythrough…", expanded=True) as rec_status:
+            log_container = st.empty()
+            lines: list[str] = []
+            with subprocess.Popen(  # noqa: S603 — cmd is constructed from sys.executable + known script
+                cmd,  # noqa: S603
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            ) as proc:
+                assert proc.stdout  # guaranteed by stdout=PIPE
+                for raw in proc.stdout:
+                    lines.append(raw.rstrip())
+                    log_container.code("\n".join(lines[-50:]))
+            if proc.returncode == 0:
+                rec_status.update(label=f"Recording saved to: {out_path}", state="complete")
+            else:
+                rec_status.update(label="Recording failed — see log above.", state="error")
 
     def get_spectrum_color(val: float, max_val: float) -> list[int]:
         """Return an RGBA color interpolated from teal to amber for dark basemaps.
