@@ -23,6 +23,60 @@
       "lat": 61.2181,
       "lng": -149.9003,
       "timezone": "US/Alaska"
+    },
+    {
+      "name": "Halloween",
+      "month": 10,
+      "day_range": [31, 31],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "Christmas",
+      "month": 12,
+      "day_range": [24, 26],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "Thanksgiving",
+      "month": 11,
+      "day_range": [22, 28],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "New Years",
+      "month": 1,
+      "day_range": [1, 2],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "Fourth of July",
+      "month": 7,
+      "day_range": [4, 4],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
+    },
+    {
+      "name": "Easter",
+      "month": 4,
+      "day_range": [14, 20],
+      "city": "Your City",
+      "lat": 0.0,
+      "lng": 0.0,
+      "timezone": "America/Chicago"
     }
   ],
   "trips": [
