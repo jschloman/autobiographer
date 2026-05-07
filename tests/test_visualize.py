@@ -19,6 +19,7 @@ from components.plugin_config import (
     render_plugin_config_fields as _render_plugin_config,
 )
 from core.local_settings import LocalSettings
+from pages.dining_soundtrack import render_dining_soundtrack
 from pages.insights import render_insights_and_narrative
 from pages.music import (
     _filter_by_date,
@@ -632,6 +633,13 @@ class TestMusicHelpers(unittest.TestCase):
 
         st.session_state["df"] = None
         render_music()
+        mock_info.assert_called_once()
+
+    @patch("streamlit.info")
+    def test_render_dining_soundtrack_no_data(self, mock_info: MagicMock) -> None:
+        """render_dining_soundtrack shows info when both datasets are missing."""
+        with patch("streamlit.session_state", {"df": None, "swarm_df": None}):
+            render_dining_soundtrack()
         mock_info.assert_called_once()
 
 

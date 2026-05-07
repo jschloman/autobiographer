@@ -21,6 +21,7 @@ from components.sidebar import render_sidebar
 from pages.beer import render_beer
 from pages.culture import render_culture
 from pages.data_sources import render_data_sources, render_plugin_page
+from pages.dining_soundtrack import render_dining_soundtrack
 from pages.fitness import render_fitness
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
 from pages.music import render_music, render_top_charts  # noqa: F401
@@ -125,6 +126,11 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
+                st.Page(
+                    render_dining_soundtrack,
+                    title="Dining Soundtrack",
+                    icon=":material/restaurant:",
+                ),
             ],
             "Places": [
                 st.Page(render_places, title="Check-ins", icon=":material/location_on:"),

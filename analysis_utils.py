@@ -119,10 +119,19 @@ def load_listening_data(file_path: str) -> Optional[pd.DataFrame]:
 def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
     """Load and parse Swarm checkin data from JSON files."""
     all_checkins = []
+    _EMPTY_COLS = [
+        "timestamp",
+        "offset",
+        "city",
+        "state",
+        "country",
+        "venue",
+        "venue_category",
+        "lat",
+        "lng",
+    ]
     if not swarm_dir or not os.path.exists(swarm_dir):
-        return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
-        )
+        return pd.DataFrame(columns=_EMPTY_COLS)
 
     json_files = glob.glob(os.path.join(swarm_dir, "checkins*.json"))
     for file_path in json_files:
@@ -166,6 +175,12 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                     lat = item.get("lat") or location.get("lat")
                     lng = item.get("lng") or location.get("lng")
 
+                    # Parse Foursquare venue category — take the first (primary) category.
+                    # Foursquare exports store categories as a list of objects with a
+                    # "name" field and an optional "pluralName" / "shortName" field.
+                    categories = venue.get("categories") or []
+                    venue_category = categories[0].get("name", "") if categories else ""
+
                     all_checkins.append(
                         {
                             "timestamp": ts,
@@ -174,6 +189,7 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                             "state": state,
                             "country": country,
                             "venue": venue.get("name", "Unknown"),
+                            "venue_category": venue_category,
                             "lat": lat,
                             "lng": lng,
                             "_needs_geocode": needs_geocode and lat is not None and lng is not None,
@@ -183,9 +199,7 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
             print(f"Error loading {file_path}: {e}")
 
     if not all_checkins:
-        return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
-        )
+        return pd.DataFrame(columns=_EMPTY_COLS)
 
     df = pd.DataFrame(all_checkins)
 
