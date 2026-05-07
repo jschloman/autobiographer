@@ -746,6 +746,36 @@ def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     return weekly.rename(columns={"artist": "genre"})
 
 
+def get_first_plays(df: pd.DataFrame) -> pd.DataFrame:
+    """Return the first play row for each artist, sorted chronologically.
+
+    For each artist, finds the earliest scrobble — representing the moment
+    that artist was "discovered."  The returned DataFrame retains all columns
+    from the input so callers can join city/location context when available.
+
+    Args:
+        df: Listening history DataFrame with at minimum ``artist`` and
+            ``timestamp`` columns.  A ``date_text`` column is expected for
+            display purposes.
+
+    Returns:
+        DataFrame of first-play rows, one per artist, sorted by ``timestamp``
+        ascending.  Empty DataFrame if input is empty or missing required
+        columns.
+    """
+    required = {"artist", "timestamp"}
+    if df.empty or not required.issubset(df.columns):
+        return pd.DataFrame()
+
+    return (
+        df.sort_values("timestamp")
+        .groupby("artist", as_index=False)
+        .first()
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+
+
 def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
     """Return monthly rank positions for the top N artists overall.
 
