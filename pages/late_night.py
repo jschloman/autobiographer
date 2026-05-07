@@ -457,12 +457,12 @@ def render_late_night() -> None:
         return
 
     st.header("Late Night Sessions")
-    st.markdown(
+    subtitle = (
         f'<p style="color:{TEXT_DIM}; margin-top:-0.5rem;">'
-        "Listening after midnight · Local time · Midnight – 4 AM window"
-        "</p>",
-        unsafe_allow_html=True,
+        "Listening after midnight · Local time · Midnight – 4 AM window"
+        "</p>"
     )
+    st.markdown(subtitle, unsafe_allow_html=True)
 
     late = _filter_late_night(df)
     total_plays = len(df)
