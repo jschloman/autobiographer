@@ -14,7 +14,13 @@ import pydeck as pdk
 from moviepy import ImageSequenceClip
 from playwright.async_api import async_playwright
 
-from components.theme import MAP_COLUMN_DEFAULT_RGBA
+from components.theme import (
+    MAP_COLUMN_DEFAULT_RGBA,
+    MAP_COUNTRY_BORDER_RGB,
+    MAP_COUNTRY_UNVISITED_RGBA,
+    MAP_COUNTRY_VISITED_RGBA,
+    MAP_STATE_BORDER_RGBA,
+)
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -329,7 +335,49 @@ def create_recording_assets(
     if "timestamp" in vs_init:
         del vs_init["timestamp"]
 
-    deck = pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**vs_init), map_style="dark")
+    # Build country/state overlay layers matching the render_places map appearance
+    geo_layers: list[pdk.Layer] = []
+    countries_path = os.path.join("assets", "countries.geojson")
+    if os.path.exists(countries_path):
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        world = gpd.read_file(countries_path)
+        geometry = [Point(xy) for xy in zip(geo_data["lng"], geo_data["lat"])]
+        points_gpd = gpd.GeoDataFrame(geo_data[["lat", "lng"]], geometry=geometry, crs="EPSG:4326")
+        visited_idx = set(gpd.sjoin(world, points_gpd, how="inner", predicate="intersects").index)
+        world["fill_color"] = world.index.map(
+            lambda i: MAP_COUNTRY_VISITED_RGBA if i in visited_idx else MAP_COUNTRY_UNVISITED_RGBA
+        )
+        geo_layers.append(
+            pdk.Layer(
+                "GeoJsonLayer",
+                world,
+                stroked=True,
+                filled=True,
+                get_fill_color="fill_color",
+                get_line_color=MAP_COUNTRY_BORDER_RGB,
+                get_line_width=1,
+            )
+        )
+        states_path = os.path.join("assets", "states.geojson")
+        if os.path.exists(states_path):
+            geo_layers.append(
+                pdk.Layer(
+                    "GeoJsonLayer",
+                    states_path,
+                    stroked=True,
+                    filled=False,
+                    get_line_color=MAP_STATE_BORDER_RGBA,
+                    get_line_width=1,
+                )
+            )
+
+    deck = pdk.Deck(
+        layers=[*geo_layers, layer],
+        initial_view_state=pdk.ViewState(**vs_init),
+        map_style="dark",
+    )
     return deck, keyframes
 
 

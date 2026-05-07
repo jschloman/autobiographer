@@ -1,11 +1,13 @@
 import os
 import shutil
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
 import pydeck as pdk
 
+from pages.places import _build_flythrough_filename
 from record_flythrough import create_recording_assets, filter_data
 
 
@@ -77,6 +79,38 @@ class TestRecordFlythrough(unittest.TestCase):
 
         self.assertTrue(mock_load_swarm.called)
         self.assertTrue(mock_apply.called)
+
+
+class TestBuildFlythroughFilename(unittest.TestCase):
+    def test_all_artist_no_dates(self) -> None:
+        name = _build_flythrough_filename("All", [])
+        self.assertTrue(name.startswith("flythrough_"))
+        self.assertTrue(name.endswith(".mp4"))
+        # No artist segment, no date segment
+        parts = name[len("flythrough_") : -len(".mp4")].split("_")
+        # Only timestamp: YYYYMMDD + HHMMSS = 2 parts
+        self.assertEqual(len(parts), 2)
+
+    def test_specific_artist_included(self) -> None:
+        name = _build_flythrough_filename("Radiohead", [])
+        self.assertIn("Radiohead", name)
+
+    def test_artist_sanitised(self) -> None:
+        name = _build_flythrough_filename("AC/DC & Friends!", [])
+        self.assertNotIn("/", name)
+        self.assertNotIn("&", name)
+        self.assertNotIn("!", name)
+
+    def test_date_range_included(self) -> None:
+        name = _build_flythrough_filename("All", [date(2022, 1, 1), date(2022, 12, 31)])
+        self.assertIn("20220101", name)
+        self.assertIn("20221231", name)
+
+    def test_artist_and_dates(self) -> None:
+        name = _build_flythrough_filename("Björk", [date(2023, 6, 1), date(2023, 6, 30)])
+        self.assertIn("Bj_rk", name)
+        self.assertIn("20230601", name)
+        self.assertIn("20230630", name)
 
 
 if __name__ == "__main__":
