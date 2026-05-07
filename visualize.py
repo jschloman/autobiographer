@@ -30,6 +30,7 @@ from pages.places import (  # noqa: F401
     render_places,
     render_spatial_analysis,
 )
+from pages.weekend_effect import render_weekend_effect
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 load_dotenv()
@@ -125,6 +126,7 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
+                st.Page(render_weekend_effect, title="Weekend Effect", icon=":material/weekend:"),
             ],
             "Places": [
                 st.Page(render_places, title="Check-ins", icon=":material/location_on:"),
