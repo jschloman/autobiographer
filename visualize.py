@@ -22,6 +22,7 @@ from pages.beer import render_beer
 from pages.culture import render_culture
 from pages.data_sources import render_data_sources, render_plugin_page
 from pages.fitness import render_fitness
+from pages.in_transit import render_in_transit
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
 from pages.music import render_music, render_top_charts  # noqa: F401
 from pages.overview import render_overview  # noqa: F401
@@ -129,6 +130,7 @@ def main() -> None:
             "Places": [
                 st.Page(render_places, title="Check-ins", icon=":material/location_on:"),
                 st.Page(render_checkin_insights, title="Insights", icon=":material/insights:"),
+                st.Page(render_in_transit, title="In Transit", icon=":material/flight:"),
             ],
             "Health": [
                 st.Page(render_fitness, title="Fitness", icon=":material/fitness_center:"),

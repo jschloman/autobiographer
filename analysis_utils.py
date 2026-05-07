@@ -117,11 +117,31 @@ def load_listening_data(file_path: str) -> Optional[pd.DataFrame]:
 
 
 def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
-    """Load and parse Swarm checkin data from JSON files."""
+    """Load and parse Swarm checkin data from JSON files.
+
+    Args:
+        swarm_dir: Path to the directory containing ``checkins*.json`` export files.
+
+    Returns:
+        DataFrame with columns: timestamp, offset, city, state, country, venue,
+        venue_category, lat, lng.  ``venue_category`` contains the first
+        Foursquare category name (e.g. ``"Airport"``, ``"Train Station"``) or an
+        empty string when categories are absent from the export.
+    """
     all_checkins = []
     if not swarm_dir or not os.path.exists(swarm_dir):
         return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
+            columns=[
+                "timestamp",
+                "offset",
+                "city",
+                "state",
+                "country",
+                "venue",
+                "venue_category",
+                "lat",
+                "lng",
+            ]
         )
 
     json_files = glob.glob(os.path.join(swarm_dir, "checkins*.json"))
@@ -166,6 +186,10 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                     lat = item.get("lat") or location.get("lat")
                     lng = item.get("lng") or location.get("lng")
 
+                    # Extract the primary Foursquare category name (first element only).
+                    categories = venue.get("categories") or []
+                    venue_category = categories[0].get("name", "") if categories else ""
+
                     all_checkins.append(
                         {
                             "timestamp": ts,
@@ -174,6 +198,7 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                             "state": state,
                             "country": country,
                             "venue": venue.get("name", "Unknown"),
+                            "venue_category": venue_category,
                             "lat": lat,
                             "lng": lng,
                             "_needs_geocode": needs_geocode and lat is not None and lng is not None,
@@ -184,7 +209,17 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
 
     if not all_checkins:
         return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
+            columns=[
+                "timestamp",
+                "offset",
+                "city",
+                "state",
+                "country",
+                "venue",
+                "venue_category",
+                "lat",
+                "lng",
+            ]
         )
 
     df = pd.DataFrame(all_checkins)
@@ -772,3 +807,175 @@ def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
         monthly.groupby("month")["plays"].rank(method="min", ascending=False).astype(int)
     )
     return monthly[["month", "artist", "rank"]]
+
+
+# ---------------------------------------------------------------------------
+# Transit / airport analysis (Issue #61)
+# ---------------------------------------------------------------------------
+
+# Foursquare category names that indicate transit hubs.  This list captures
+# the most common category strings found in GDPR exports; partial matching via
+# ``str.contains`` is used so minor label variations still match.
+TRANSIT_CATEGORY_KEYWORDS: list[str] = [
+    "Airport",
+    "Train Station",
+    "Transit",
+    "Bus Station",
+    "Metro",
+    "Subway",
+    "Ferry",
+    "Port",
+    "Rail",
+]
+
+
+def get_transit_days(swarm_df: pd.DataFrame) -> set[str]:
+    """Return the set of calendar date strings (YYYY-MM-DD) that contain a transit check-in.
+
+    A day is classified as a *transit day* when at least one Swarm check-in on
+    that calendar day falls into an airport or transit hub Foursquare category.
+
+    Args:
+        swarm_df: Output of :func:`load_swarm_data`, which must include a
+            ``venue_category`` column and a ``timestamp`` column (Unix seconds).
+
+    Returns:
+        Set of ISO date strings (e.g. ``{"2023-06-12", "2023-06-15"}``).
+    """
+    if swarm_df.empty or "venue_category" not in swarm_df.columns:
+        return set()
+
+    # Build a regex pattern from the keyword list (case-insensitive).
+    pattern = "|".join(TRANSIT_CATEGORY_KEYWORDS)
+    transit_mask = swarm_df["venue_category"].str.contains(pattern, case=False, na=False)
+    transit_rows = swarm_df[transit_mask].copy()
+
+    if transit_rows.empty:
+        return set()
+
+    transit_rows["date"] = pd.to_datetime(transit_rows["timestamp"], unit="s").dt.strftime(
+        "%Y-%m-%d"
+    )
+    return set(transit_rows["date"].unique())
+
+
+def split_transit_listens(
+    listens_df: pd.DataFrame, transit_days: set[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Partition a listening DataFrame into transit-day and non-transit-day rows.
+
+    Args:
+        listens_df: Listening history DataFrame with a ``date_text`` datetime column.
+        transit_days: Set of ISO date strings returned by :func:`get_transit_days`.
+
+    Returns:
+        Tuple ``(transit_df, home_df)`` — both are subsets of ``listens_df``.
+    """
+    if listens_df.empty or "date_text" not in listens_df.columns:
+        return listens_df.iloc[:0].copy(), listens_df.iloc[:0].copy()
+
+    date_strs = listens_df["date_text"].dt.strftime("%Y-%m-%d")
+    mask = date_strs.isin(transit_days)
+    return listens_df[mask].copy(), listens_df[~mask].copy()
+
+
+def get_avg_plays_per_day(df: pd.DataFrame) -> float:
+    """Return the mean number of plays per calendar day.
+
+    Args:
+        df: Listening history DataFrame with a ``date_text`` datetime column.
+
+    Returns:
+        Average plays per day, or 0.0 when the DataFrame is empty.
+    """
+    if df.empty or "date_text" not in df.columns:
+        return 0.0
+    unique_days = int(df["date_text"].dt.date.nunique())
+    return float(len(df)) / unique_days if unique_days > 0 else 0.0
+
+
+def get_new_artist_discovery_rate(
+    subset_df: pd.DataFrame, full_df: pd.DataFrame
+) -> tuple[int, float]:
+    """Count artists heard for the first time within *subset_df*.
+
+    An artist is a *discovery* if their earliest listen in the full dataset
+    falls within the subset (i.e. the first listen is on a transit/home day).
+
+    Args:
+        subset_df: Subset of listens (e.g. transit days only).
+        full_df: Complete listening history.
+
+    Returns:
+        Tuple ``(discovery_count, discovery_rate)`` where ``discovery_rate`` is
+        the fraction of unique artists in the subset that were first heard there.
+    """
+    if subset_df.empty or full_df.empty or "artist" not in full_df.columns:
+        return 0, 0.0
+
+    # Earliest listen date per artist in the full dataset.
+    first_listens = full_df.groupby("artist")["date_text"].min()
+
+    subset_artists = subset_df["artist"].unique()
+    subset_dates = subset_df["date_text"]
+    min_date = subset_dates.min()
+    max_date = subset_dates.max()
+
+    discoveries = sum(
+        1
+        for artist in subset_artists
+        if artist in first_listens.index and min_date <= first_listens[artist] <= max_date
+    )
+
+    total = len(subset_artists)
+    rate = discoveries / total if total > 0 else 0.0
+    return discoveries, rate
+
+
+def get_transit_listening_hours(transit_df: pd.DataFrame) -> pd.DataFrame:
+    """Return the hourly play distribution for transit-day listens.
+
+    Args:
+        transit_df: Subset of listens recorded on transit days; must have a
+            ``date_text`` datetime column.
+
+    Returns:
+        DataFrame with columns ``hour`` (0–23) and ``Plays`` (int).
+    """
+    return get_hourly_distribution(transit_df)
+
+
+def get_longest_transit_session(transit_df: pd.DataFrame, gap_minutes: int = 60) -> int:
+    """Return the number of tracks in the longest unbroken transit listening session.
+
+    Two consecutive tracks are considered part of the same session when the gap
+    between them is less than *gap_minutes*.
+
+    Args:
+        transit_df: Transit-day listens with a ``timestamp`` column (Unix seconds).
+        gap_minutes: Maximum gap (in minutes) between consecutive tracks within
+            one session.
+
+    Returns:
+        Length (track count) of the longest session, or 0 when there are no
+        transit listens.
+    """
+    if transit_df.empty or "timestamp" not in transit_df.columns:
+        return 0
+
+    timestamps = transit_df["timestamp"].sort_values().values
+    if len(timestamps) == 0:
+        return 0
+
+    gap_sec = gap_minutes * 60
+    max_session = 1
+    current_session = 1
+
+    for i in range(1, len(timestamps)):
+        if timestamps[i] - timestamps[i - 1] <= gap_sec:
+            current_session += 1
+            max_session = max(max_session, current_session)
+        else:
+            current_session = 1
+
+    return max_session
