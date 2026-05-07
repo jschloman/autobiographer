@@ -83,8 +83,8 @@ class TestLocationFallbacks(unittest.TestCase):
             {"dt": datetime(2016, 1, 3, 12, 0, tzinfo=timezone.utc), "expected": "Nairobi, KE"},
             # 5. Residency Home 2: Jan 5, 2020 (Sunday) (Mombasa)
             {"dt": datetime(2020, 1, 5, 12, 0, tzinfo=timezone.utc), "expected": "Mombasa, KE"},
-            # 6. Default: 2026 (After residency ends)
-            {"dt": datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc), "expected": "Reykjavik, IS"},
+            # 6. Default: 2026 (After residency ends, mid-February avoids all holidays)
+            {"dt": datetime(2026, 2, 15, 12, 0, tzinfo=timezone.utc), "expected": "Reykjavik, IS"},
         ]
 
         df = pd.DataFrame(
