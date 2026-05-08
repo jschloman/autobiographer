@@ -118,11 +118,11 @@ def main() -> None:
         {
             "Overview": [
                 st.Page(render_overview, title="Overview", icon=":material/dashboard:"),
+                st.Page(render_geo_explorer, title="Geo Explorer", icon=":material/explore:"),
             ],
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
-                st.Page(render_geo_explorer, title="Geo Explorer", icon=":material/explore:"),
             ],
             "Places": [
                 st.Page(
