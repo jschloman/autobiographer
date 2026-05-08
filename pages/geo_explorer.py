@@ -420,7 +420,9 @@ def _render_2d_map(
     map_frames: list[DataFrame] = []
 
     if show_scrobbles and music_df is not None:
-        scrobble_data = build_map_data(music_df, selected_artist)
+        # music_df is already artist-filtered by the caller; pass "All" so
+        # build_map_data aggregates the pre-filtered data without re-filtering.
+        scrobble_data = build_map_data(music_df, "All")
         if not scrobble_data.empty:
             if selected_artist == "All":
                 top_artists = (
@@ -802,8 +804,8 @@ def render_geo_explorer() -> None:
             (music_df["date_text"].dt.date >= date_range[0])
             & (music_df["date_text"].dt.date <= date_range[1])
         ]
-
-    # Artist filter applied inside each view renderer (so 2D map can do its own capping)
+    if music_df is not None and selected_artist != "All":
+        music_df = music_df[music_df["artist"] == selected_artist]
 
     # ── Share button (scrobble views only) ────────────────────────────────────
     if view in (_VIEW_2D, _VIEW_US) and music_df is not None and not music_df.empty:

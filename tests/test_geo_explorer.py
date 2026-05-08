@@ -283,7 +283,14 @@ class TestRenderGeoExplorer(unittest.TestCase):
         mock_share: MagicMock,
     ) -> None:
         mock_seg.return_value = "🇺🇸 US States"
-        mock_sel.return_value = "— select a state —"
+
+        # Artist selectbox should return "All"; state detail selectbox should skip
+        def _sel_side_effect(label, *a, **kw):
+            if "Artist" in str(label):
+                return "All"
+            return "— select a state —"
+
+        mock_sel.side_effect = _sel_side_effect
         mock_cols.side_effect = self._cols_side_effect
 
         with patch("streamlit.popover", return_value=self._make_pop_mock()):
