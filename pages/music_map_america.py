@@ -277,6 +277,16 @@ th{{color:#22d3ee}}
 </body></html>"""
 
 
+def filter_us_states(df: pd.DataFrame) -> pd.DataFrame:
+    """Public alias for :func:`_filter_us_states` (used by geo_explorer)."""
+    return _filter_us_states(df)
+
+
+def build_state_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """Public alias for :func:`_build_state_stats` (used by geo_explorer)."""
+    return _build_state_stats(df)
+
+
 def render_music_map_america() -> None:
     """Render the Musical Map of America page.
 
