@@ -206,15 +206,17 @@ def _render_chapter_card(chapter: dict[str, Any], index: int, total: int) -> Non
                 )
 
 
-def _render_trip_detector(assumptions: dict[str, Any]) -> None:
+def _render_trip_detector(assumptions: dict[str, Any], detected_trips_path: str) -> None:
     """Render the Swarm-based trip detection section.
 
     Allows the user to detect trips from Swarm check-in data by clustering
     check-ins that are far from their home residency location.  Results are
-    saved to ``data/cache/detected_trips.json`` and displayed inline.
+    saved to ``detected_trips_path`` and the page is refreshed so the new
+    trips immediately appear on the timeline and year dropdown.
 
     Args:
         assumptions: Parsed assumptions dict (provides home residency lat/lng).
+        detected_trips_path: File path where detected trips JSON is saved/loaded.
     """
     swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
     if swarm_df is None or swarm_df.empty:
@@ -224,10 +226,10 @@ def _render_trip_detector(assumptions: dict[str, Any]) -> None:
         )
         return
 
-    cached = _load_detected_trips_cache()
+    cached = _load_detected_trips_cache(detected_trips_path)
     if cached:
         st.caption(
-            f"Last run detected {len(cached)} trip(s). Results saved to `{_DETECTED_TRIPS_CACHE}`."
+            f"Last run detected {len(cached)} trip(s). Results saved to `{detected_trips_path}`."
         )
 
     col_a, col_b = st.columns(2)
@@ -259,31 +261,10 @@ def _render_trip_detector(assumptions: dict[str, Any]) -> None:
                 gap_days=int(gap_days),
                 progress_cb=st.write,
             )
-            _save_detected_trips_cache(trips)
+            _save_detected_trips_cache(trips, detected_trips_path)
             label = f"Done — {len(trips)} trip(s) detected" if trips else "Done — no trips detected"
             status.update(label=label, state="complete")
-
-        if trips:
-            st.success(
-                f"Detected **{len(trips)}** trip(s). "
-                f"Results saved to `{_DETECTED_TRIPS_CACHE}`. "
-                "Review and add to your assumptions file to show them on the timeline."
-            )
-            rows = [
-                {
-                    "Start": t["start"],
-                    "End": t["end"],
-                    "City": t["city"],
-                    "Country": t["country"],
-                    "Check-ins": t["checkin_count"],
-                }
-                for t in trips
-            ]
-            st.dataframe(rows, use_container_width=False)
-        else:
-            st.info(
-                "No trips detected with the current settings. Try reducing the distance threshold."
-            )
+        st.rerun()
 
 
 def render_life_in_chapters() -> None:
@@ -314,21 +295,34 @@ def render_life_in_chapters() -> None:
     assumptions_path: str | None = loaded_config[2] if loaded_config else None
     assumptions = load_assumptions(assumptions_path)
 
+    # Resolve detected trips file path (configurable via Location Assumptions plugin)
+    detected_trips_path: str = (
+        st.session_state.get("assumptions_detected_trips_file") or _DETECTED_TRIPS_CACHE
+    )
+
     # ── Trip detector (collapsed by default) ──────────────────────────────────
     with st.expander(":material/travel_explore: Detect trips from Swarm data", expanded=False):
-        _render_trip_detector(assumptions)
+        _render_trip_detector(assumptions, detected_trips_path)
 
     has_residency = bool(assumptions.get("residency"))
     has_trips = bool(assumptions.get("trips"))
 
-    if not has_residency and not has_trips:
+    # Merge auto-detected trips from cache into assumptions so they appear on the timeline
+    detected_trips = _load_detected_trips_cache(detected_trips_path)
+    if detected_trips:
+        merged_assumptions: dict[str, Any] = dict(assumptions)
+        merged_assumptions["trips"] = list(assumptions.get("trips", [])) + detected_trips
+    else:
+        merged_assumptions = assumptions
+
+    if not has_residency and not (has_trips or detected_trips):
         st.warning(
             "No residency or trip data found in your assumptions file. "
             "Add `residency` and/or `trips` entries to see your life chapters."
         )
         return
 
-    chapters = build_life_chapters(df, assumptions)
+    chapters = build_life_chapters(df, merged_assumptions)
 
     if not chapters:
         st.info("No chapters could be built from the assumptions data.")

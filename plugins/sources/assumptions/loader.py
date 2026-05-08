@@ -35,7 +35,9 @@ class AssumptionsPlugin(SourcePlugin):
         """Declare sidebar config fields for the assumptions plugin.
 
         Returns:
-            List containing a single path field for the JSON file.
+            List with a path field for the assumptions JSON and an optional
+            path field for the auto-detected trips JSON produced by the
+            Life in Chapters trip detector.
         """
         return [
             {
@@ -43,7 +45,13 @@ class AssumptionsPlugin(SourcePlugin):
                 "label": "Location assumptions JSON",
                 "type": "file_path",
                 "file_types": [("JSON files", "*.json"), ("All files", "*.*")],
-            }
+            },
+            {
+                "key": "detected_trips_file",
+                "label": "Detected trips file (optional)",
+                "type": "file_path",
+                "file_types": [("JSON files", "*.json"), ("All files", "*.*")],
+            },
         ]
 
     def load(self, config: dict[str, Any]) -> pd.DataFrame:
@@ -52,16 +60,21 @@ class AssumptionsPlugin(SourcePlugin):
         Normalizes trips, holidays, and the default location into rows so the
         data can be inspected or displayed like any other plugin output.
         Residency entries (which have complex sub-rules) are included as a
-        single summary row each.
+        single summary row each.  Auto-detected trips from the optional
+        ``detected_trips_file`` are appended as ``"detected_trip"`` rows.
 
         Args:
             config: Must contain "assumptions_file" key with path to JSON file.
                 If the file is absent or empty the built-in defaults are used.
+                Optionally contains "detected_trips_file" for the auto-detected
+                trips JSON written by the Life in Chapters trip detector.
 
         Returns:
             DataFrame with columns: type, city, lat, lng, timezone, start, end.
             Returns an empty DataFrame if no assumptions are defined.
         """
+        import json
+
         from analysis_utils import load_assumptions
 
         assumptions_file = config.get("assumptions_file", "")
@@ -124,6 +137,27 @@ class AssumptionsPlugin(SourcePlugin):
                     "end": res.get("end", ""),
                 }
             )
+
+        # Auto-detected trips from the Life in Chapters trip detector
+        detected_trips_file = config.get("detected_trips_file", "")
+        if detected_trips_file:
+            try:
+                with open(detected_trips_file, encoding="utf-8") as fh:
+                    detected: list[dict[str, Any]] = json.load(fh)
+                for trip in detected:
+                    rows.append(
+                        {
+                            "type": "detected_trip",
+                            "city": trip.get("city", ""),
+                            "lat": trip.get("lat"),
+                            "lng": trip.get("lng"),
+                            "timezone": "",
+                            "start": trip.get("start", ""),
+                            "end": trip.get("end", ""),
+                        }
+                    )
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
 
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 

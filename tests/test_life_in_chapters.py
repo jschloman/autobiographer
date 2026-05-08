@@ -448,6 +448,8 @@ class TestRenderLifeInChapters(unittest.TestCase):
             render_life_in_chapters()
         mock_info.assert_called_once()
 
+    @patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[])
+    @patch("streamlit.expander")
     @patch("streamlit.warning")
     @patch("streamlit.header")
     @patch("streamlit.caption")
@@ -456,7 +458,14 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_caption: MagicMock,
         mock_header: MagicMock,
         mock_warning: MagicMock,
+        mock_expander: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
+        expander_cm = MagicMock()
+        expander_cm.__enter__ = MagicMock(return_value=expander_cm)
+        expander_cm.__exit__ = MagicMock(return_value=False)
+        mock_expander.return_value = expander_cm
+
         df = self._make_full_df()
         assumptions_no_periods = {
             "residency": [],
@@ -474,6 +483,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
+    @patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[])
     @patch("streamlit.selectbox")
     @patch("streamlit.info")
     @patch("streamlit.metric")
@@ -500,6 +510,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_metric: MagicMock,
         mock_info: MagicMock,
         mock_selectbox: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         df = self._make_full_df()
         assumptions = _make_assumptions(include_trips=True)
@@ -546,6 +557,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         # Banner metrics should be called
         self.assertTrue(mock_metric.called)
 
+    @patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[])
     @patch("streamlit.info")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
@@ -570,6 +582,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_columns: MagicMock,
         mock_metric: MagicMock,
         mock_info: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         """Chapters with plays outside the filter range are hidden."""
         df = self._make_full_df()
@@ -614,6 +627,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         # st.info should be called because no chapters pass the filter
         mock_info.assert_called()
 
+    @patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[])
     @patch("streamlit.selectbox")
     @patch("streamlit.info")
     @patch("streamlit.metric")
@@ -640,6 +654,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_metric: MagicMock,
         mock_info: MagicMock,
         mock_selectbox: MagicMock,
+        _mock_cache: MagicMock,
     ) -> None:
         """Selecting a specific year shows only chapters that overlap that year."""
         df = self._make_full_df()
