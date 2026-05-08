@@ -22,15 +22,11 @@ from pages.beer import render_beer
 from pages.culture import render_culture
 from pages.data_sources import render_data_sources, render_plugin_page
 from pages.fitness import render_fitness
+from pages.geo_explorer import render_geo_explorer
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
 from pages.music import render_music, render_top_charts  # noqa: F401
-from pages.music_map_america import render_music_map_america
 from pages.overview import render_overview  # noqa: F401
-from pages.places import (  # noqa: F401
-    render_checkin_insights,
-    render_places,
-    render_spatial_analysis,
-)
+from pages.places import render_checkin_insights  # noqa: F401
 from plugins.sources import REGISTRY, load_builtin_plugins
 
 load_dotenv()
@@ -126,11 +122,12 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
-                st.Page(render_music_map_america, title="Music Map", icon=":material/map:"),
+                st.Page(render_geo_explorer, title="Geo Explorer", icon=":material/explore:"),
             ],
             "Places": [
-                st.Page(render_places, title="Check-ins", icon=":material/location_on:"),
-                st.Page(render_checkin_insights, title="Insights", icon=":material/insights:"),
+                st.Page(
+                    render_checkin_insights, title="Check-in Insights", icon=":material/insights:"
+                ),
             ],
             "Health": [
                 st.Page(render_fitness, title="Fitness", icon=":material/fitness_center:"),
