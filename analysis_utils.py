@@ -801,6 +801,8 @@ def build_life_chapters(
                 "start": pd.Timestamp(start_str),
                 "end": pd.Timestamp(end_str),
                 "kind": "residency",
+                "lat": res.get("lat"),
+                "lng": res.get("lng"),
             }
         )
 
@@ -819,6 +821,8 @@ def build_life_chapters(
                 "start": pd.Timestamp(start_str),
                 "end": pd.Timestamp(end_str),
                 "kind": "trip",
+                "lat": trip.get("lat"),
+                "lng": trip.get("lng"),
             }
         )
 
@@ -890,6 +894,9 @@ def build_life_chapters(
                 "location": period["location"],
                 "start": start_ts,
                 "end": end_ts,
+                "kind": period["kind"],
+                "lat": period.get("lat"),
+                "lng": period.get("lng"),
                 "total_plays": total_plays,
                 "top_artists": top_artists,
                 "top_album": top_album,

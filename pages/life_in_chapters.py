@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from analysis_utils import build_life_chapters, detect_trips_from_swarm, load_assumptions
@@ -23,6 +24,7 @@ from components.theme import (
     TEAL,
     TEXT_DIM,
     TEXT_PRIMARY,
+    apply_dark_theme,
 )
 
 _DETECTED_TRIPS_CACHE = os.path.join("data", "cache", "detected_trips.json")
@@ -100,13 +102,80 @@ def _save_detected_trips_cache(
         json.dump(trips, fh, indent=2)
 
 
-def _render_chapter_card(chapter: dict[str, Any], index: int, total: int) -> None:
+def _render_chapter_map(chapter: dict[str, Any], swarm_df: pd.DataFrame | None) -> None:
+    """Render a compact scatter map for a single chapter.
+
+    Uses Swarm check-ins from the chapter's date range when available;
+    falls back to a single marker at the chapter's lat/lng if present.
+    Skips silently if no geographic data exists for the chapter.
+
+    Args:
+        chapter: Chapter dict (must include ``start``, ``end``, ``label``,
+            and optionally ``lat`` / ``lng``).
+        swarm_df: Raw Swarm check-in DataFrame with ``timestamp``, ``lat``,
+            ``lng``, and ``city`` columns, or ``None`` if unavailable.
+    """
+    chapter_lat: float | None = chapter.get("lat")
+    chapter_lng: float | None = chapter.get("lng")
+
+    map_df: pd.DataFrame | None = None
+
+    if swarm_df is not None and not swarm_df.empty:
+        required = {"timestamp", "lat", "lng"}
+        if required.issubset(swarm_df.columns):
+            dt = pd.to_datetime(swarm_df["timestamp"], unit="s", utc=True).dt.date
+            mask = (dt >= chapter["start"].date()) & (dt <= chapter["end"].date())
+            chapter_swarm = swarm_df[mask].dropna(subset=["lat", "lng"])
+            chapter_swarm = chapter_swarm[chapter_swarm["lat"] != 0]
+            if not chapter_swarm.empty:
+                group_cols = [c for c in ["city", "lat", "lng"] if c in chapter_swarm.columns]
+                map_df = chapter_swarm.groupby(group_cols).size().reset_index(name="checkins")
+                if "city" not in map_df.columns:
+                    map_df["city"] = chapter["label"]
+
+    if map_df is None or map_df.empty:
+        if chapter_lat is None or chapter_lng is None:
+            return
+        map_df = pd.DataFrame(
+            [{"city": chapter["label"], "lat": chapter_lat, "lng": chapter_lng, "checkins": 1}]
+        )
+
+    center_lat = chapter_lat if chapter_lat is not None else float(map_df["lat"].mean())
+    center_lng = chapter_lng if chapter_lng is not None else float(map_df["lng"].mean())
+
+    fig = px.scatter_map(
+        map_df,
+        lat="lat",
+        lon="lng",
+        size="checkins",
+        size_max=20,
+        hover_name="city",
+        color_discrete_sequence=[ACCENT_INDIGO],
+        zoom=5,
+        center={"lat": center_lat, "lon": center_lng},
+    )
+    fig.update_layout(
+        map_style="carto-darkmatter",
+        height=220,
+        margin={"r": 0, "t": 0, "l": 0, "b": 0},
+    )
+    apply_dark_theme(fig)
+    st.plotly_chart(fig, width="stretch")
+
+
+def _render_chapter_card(
+    chapter: dict[str, Any],
+    index: int,
+    total: int,
+    swarm_df: pd.DataFrame | None = None,
+) -> None:
     """Render a single chapter as a styled Streamlit card with a connector line.
 
     Args:
         chapter: Chapter dict from ``build_life_chapters()``.
         index: Zero-based position of this chapter in the list.
         total: Total number of chapters (used to suppress the trailing line).
+        swarm_df: Raw Swarm check-in DataFrame used to populate the chapter map.
     """
     start: pd.Timestamp = chapter["start"]
     end: pd.Timestamp = chapter["end"]
@@ -204,6 +273,9 @@ def _render_chapter_card(chapter: dict[str, Any], index: int, total: int) -> Non
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+
+        # Chapter map
+        _render_chapter_map(chapter, swarm_df)
 
 
 def _render_trip_detector(assumptions: dict[str, Any], detected_trips_path: str) -> None:
@@ -378,8 +450,9 @@ def render_life_in_chapters() -> None:
         return
 
     # ── Timeline ─────────────────────────────────────────────────────────────
+    page_swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
     for i, chapter in enumerate(chapters):
-        _render_chapter_card(chapter, i, len(chapters))
+        _render_chapter_card(chapter, i, len(chapters), swarm_df=page_swarm_df)
 
     # Trailing connector end-cap
     st.markdown(
