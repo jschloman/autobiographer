@@ -59,6 +59,106 @@ _VIEW_TABLE = "📋 Table"
 
 _CHECKIN_RGBA = [34, 211, 238, 210]  # cyan — distinct from scrobble spectrum
 
+# Geographic centre of each US state (approximate, public domain).
+# Used to place highlight rings when the filtered data includes US state info.
+_US_STATE_CENTROIDS: dict[str, tuple[float, float]] = {
+    "AL": (32.807, -86.791),
+    "AK": (61.371, -152.404),
+    "AZ": (33.730, -111.431),
+    "AR": (34.970, -92.373),
+    "CA": (36.116, -119.682),
+    "CO": (39.060, -105.311),
+    "CT": (41.598, -72.755),
+    "DE": (39.319, -75.507),
+    "DC": (38.897, -77.027),
+    "FL": (27.766, -81.687),
+    "GA": (33.041, -83.643),
+    "HI": (21.094, -157.498),
+    "ID": (44.240, -114.479),
+    "IL": (40.349, -88.986),
+    "IN": (39.849, -86.258),
+    "IA": (42.012, -93.211),
+    "KS": (38.527, -96.726),
+    "KY": (37.668, -84.670),
+    "LA": (31.170, -91.868),
+    "ME": (44.694, -69.382),
+    "MD": (39.064, -76.802),
+    "MA": (42.230, -71.530),
+    "MI": (43.327, -84.536),
+    "MN": (45.694, -93.900),
+    "MS": (32.742, -89.679),
+    "MO": (38.456, -92.288),
+    "MT": (46.922, -110.454),
+    "NE": (41.125, -98.268),
+    "NV": (38.314, -117.055),
+    "NH": (43.452, -71.564),
+    "NJ": (40.299, -74.521),
+    "NM": (34.841, -106.248),
+    "NY": (42.166, -74.948),
+    "NC": (35.630, -79.806),
+    "ND": (47.529, -99.784),
+    "OH": (40.389, -82.765),
+    "OK": (35.565, -96.929),
+    "OR": (44.572, -122.071),
+    "PA": (40.591, -77.210),
+    "RI": (41.681, -71.512),
+    "SC": (33.857, -80.945),
+    "SD": (44.300, -99.439),
+    "TN": (35.748, -86.692),
+    "TX": (31.054, -97.563),
+    "UT": (40.150, -111.862),
+    "VT": (44.046, -72.711),
+    "VA": (37.769, -78.170),
+    "WA": (47.401, -121.490),
+    "WV": (38.491, -80.954),
+    "WI": (44.269, -89.616),
+    "WY": (42.756, -107.302),
+}
+
+# Indigo accent with ~22 % opacity — visible highlight without drowning city columns
+_STATE_HIGHLIGHT_FILL_RGBA = [99, 102, 241, 55]
+_STATE_HIGHLIGHT_LINE_RGBA = [99, 102, 241, 180]
+
+
+def build_state_centroid_layer(music_df: DataFrame) -> pdk.Layer | None:
+    """Return a Pydeck ScatterplotLayer highlighting US states present in *music_df*.
+
+    Uses the ``state`` column (normalised to 2-letter abbreviations) to find
+    which states have listening data, then places a large semi-transparent
+    indigo circle at each state's geographic centre.
+
+    Args:
+        music_df: Filtered listening history DataFrame.
+
+    Returns:
+        A ``pdk.Layer`` or ``None`` when no US state data is found.
+    """
+    if "state" not in music_df.columns or music_df.empty:
+        return None
+    us_df = filter_us_states(music_df)
+    if us_df.empty:
+        return None
+    active_states = us_df["state"].unique()
+    rows = []
+    for abbr in active_states:
+        if abbr in _US_STATE_CENTROIDS:
+            lat, lng = _US_STATE_CENTROIDS[abbr]
+            rows.append({"state": abbr, "lat": lat, "lng": lng})
+    if not rows:
+        return None
+    return pdk.Layer(
+        "ScatterplotLayer",
+        rows,
+        get_position=["lng", "lat"],
+        get_fill_color=_STATE_HIGHLIGHT_FILL_RGBA,
+        get_line_color=_STATE_HIGHLIGHT_LINE_RGBA,
+        stroked=True,
+        filled=True,
+        line_width_min_pixels=2,
+        get_radius=250_000,  # ~250 km — covers most of a US state visually
+        pickable=False,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pure data helpers
@@ -237,7 +337,21 @@ def _render_3d_globe(
     except ImportError:
         world_gdf, states_path = None, None
 
-    layers: list = []
+    # ── State highlight rings (drawn first so city columns sit on top) ─────────
+    active_states: list[str] = []
+    if music_df is not None and not music_df.empty:
+        state_layer = build_state_centroid_layer(music_df)
+        if state_layer is not None:
+            layers_before_geo: list = [state_layer]
+            # Collect active state abbreviations for the flythrough command
+            us_filtered = filter_us_states(music_df)
+            active_states = sorted(us_filtered["state"].unique().tolist())
+        else:
+            layers_before_geo = []
+    else:
+        layers_before_geo = []
+
+    layers: list = layers_before_geo
     if world_gdf is not None:
         layers.append(
             pdk.Layer(
@@ -379,6 +493,8 @@ def _render_3d_globe(
             cmd.extend(["--swarm_dir", swarm_dir_cfg])
         if assumptions_cfg:
             cmd.extend(["--assumptions", assumptions_cfg])
+        if active_states:
+            cmd.extend(["--highlight_states", ",".join(active_states)])
 
         with st.status("Recording flythrough…", expanded=True) as rec_status:
             log_container = st.empty()

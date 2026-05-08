@@ -21,6 +21,11 @@ from components.theme import (
     MAP_COUNTRY_VISITED_RGBA,
     MAP_STATE_BORDER_RGBA,
 )
+from pages.geo_explorer import (
+    _STATE_HIGHLIGHT_FILL_RGBA,
+    _STATE_HIGHLIGHT_LINE_RGBA,
+    _US_STATE_CENTROIDS,
+)
 
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -199,6 +204,7 @@ def create_recording_assets(
     marker_zoom: float = 3.0,
     swarm_dir: str | None = None,
     assumptions_path: str | None = None,
+    highlight_states: list[str] | None = None,
 ) -> tuple | None:
     """Load data and prepare the PyDeck object and keyframes."""
     if not csv_path:
@@ -373,6 +379,34 @@ def create_recording_assets(
                 )
             )
 
+    # State highlight rings (match Geo Explorer 3D Globe appearance)
+    if highlight_states:
+        state_rows = [
+            {
+                "state": abbr,
+                "lat": _US_STATE_CENTROIDS[abbr][0],
+                "lng": _US_STATE_CENTROIDS[abbr][1],
+            }
+            for abbr in highlight_states
+            if abbr in _US_STATE_CENTROIDS
+        ]
+        if state_rows:
+            geo_layers.insert(
+                0,
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    state_rows,
+                    get_position=["lng", "lat"],
+                    get_fill_color=_STATE_HIGHLIGHT_FILL_RGBA,
+                    get_line_color=_STATE_HIGHLIGHT_LINE_RGBA,
+                    stroked=True,
+                    filled=True,
+                    line_width_min_pixels=2,
+                    get_radius=250_000,
+                    pickable=False,
+                ),
+            )
+
     deck = pdk.Deck(
         layers=[*geo_layers, layer],
         initial_view_state=pdk.ViewState(**vs_init),
@@ -422,8 +456,17 @@ def main() -> None:
         action="store_true",
         help="Retain the temporary per-frame PNG files after encoding",
     )
+    parser.add_argument(
+        "--highlight_states",
+        help="Comma-separated US state abbreviations to highlight (e.g. 'IL,MD')",
+    )
 
     args = parser.parse_args()
+    highlight_states = (
+        [s.strip() for s in args.highlight_states.split(",") if s.strip()]
+        if args.highlight_states
+        else None
+    )
     result = create_recording_assets(
         args.csv,
         artist=args.artist,
@@ -432,6 +475,7 @@ def main() -> None:
         marker_zoom=args.marker_zoom,
         swarm_dir=args.swarm_dir,
         assumptions_path=args.assumptions,
+        highlight_states=highlight_states,
     )
 
     if result is None:
