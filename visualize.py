@@ -24,6 +24,7 @@ from pages.data_sources import render_data_sources, render_plugin_page
 from pages.fitness import render_fitness
 from pages.geo_explorer import render_geo_explorer
 from pages.insights import render_insights, render_insights_and_narrative  # noqa: F401
+from pages.life_in_chapters import render_life_in_chapters
 from pages.music import render_music, render_top_charts  # noqa: F401
 from pages.overview import render_overview  # noqa: F401
 from pages.places import render_checkin_insights  # noqa: F401
@@ -123,6 +124,11 @@ def main() -> None:
             "Music": [
                 st.Page(render_music, title="Listening", icon=":material/headphones:"),
                 st.Page(render_insights, title="Insights", icon=":material/auto_stories:"),
+                st.Page(
+                    render_life_in_chapters,
+                    title="Life in Chapters",
+                    icon=":material/auto_stories:",
+                ),
             ],
             "Places": [
                 st.Page(
