@@ -746,6 +746,160 @@ def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     return weekly.rename(columns={"artist": "genre"})
 
 
+def build_life_chapters(
+    df: pd.DataFrame,
+    assumptions: dict[str, Any],
+    min_plays_exclusive: int = 5,
+) -> list[dict[str, Any]]:
+    """Build a chronological list of life chapters from residency and trip assumptions.
+
+    Each chapter represents a distinct geographic period (residency segment or
+    trip) with aggregated listening statistics.  Overlapping periods are
+    resolved by giving trips priority over residency (matching the same
+    precedence used in ``apply_swarm_offsets``).
+
+    Args:
+        df: Listening history DataFrame with ``date_text`` (datetime) and
+            ``artist``, ``album`` columns.
+        assumptions: Parsed assumptions dict from ``load_assumptions()``.
+        min_plays_exclusive: Minimum number of plays in the chapter for an
+            artist to qualify as "chapter-exclusive" (default 5).
+
+    Returns:
+        List of chapter dicts sorted by ``start`` date, each containing:
+
+        - ``label`` (str): Human-readable chapter name.
+        - ``location`` (str): City / country description.
+        - ``start`` (pd.Timestamp): Chapter start date.
+        - ``end`` (pd.Timestamp): Chapter end date.
+        - ``total_plays`` (int): Number of scrobbles in the period.
+        - ``top_artists`` (list[str]): Top-5 artists by play count.
+        - ``top_album`` (str | None): Most-played album.
+        - ``discovery_count`` (int): Artists first heard during this chapter.
+        - ``exclusive_artists`` (list[str]): Artists whose listening is
+          concentrated in this chapter (uniqueness score ≥ 0.8).
+    """
+    if df.empty or "date_text" not in df.columns:
+        return []
+
+    # --- 1. Collect raw periods from assumptions --------------------------------
+    raw_periods: list[dict[str, Any]] = []
+
+    for res in assumptions.get("residency", []):
+        start_str = res.get("start")
+        end_str = res.get("end")
+        if not start_str or not end_str:
+            continue
+        city = res.get("city") or res.get("state") or "Unknown"
+        country = res.get("country", "")
+        location = f"{city}, {country}" if country else city
+        raw_periods.append(
+            {
+                "label": city,
+                "location": location,
+                "start": pd.Timestamp(start_str),
+                "end": pd.Timestamp(end_str),
+                "kind": "residency",
+            }
+        )
+
+    for trip in assumptions.get("trips", []):
+        start_str = trip.get("start")
+        end_str = trip.get("end")
+        if not start_str or not end_str:
+            continue
+        city = trip.get("city") or trip.get("state") or "Unknown"
+        country = trip.get("country", "")
+        location = f"{city}, {country}" if country else city
+        raw_periods.append(
+            {
+                "label": f"Trip to {city}",
+                "location": location,
+                "start": pd.Timestamp(start_str),
+                "end": pd.Timestamp(end_str),
+                "kind": "trip",
+            }
+        )
+
+    if not raw_periods:
+        return []
+
+    # --- 2. Sort chronologically -----------------------------------------------
+    raw_periods.sort(key=lambda p: p["start"])
+
+    # --- 3. Compute stats for each period --------------------------------------
+    df_sorted = df.copy()
+    df_sorted["date_text"] = pd.to_datetime(df_sorted["date_text"])
+
+    # Pre-compute first-heard date for every artist (across full history)
+    if "artist" in df_sorted.columns:
+        first_heard: pd.Series = df_sorted.groupby("artist")["date_text"].min()
+    else:
+        first_heard = pd.Series(dtype="datetime64[ns]")
+
+    chapters: list[dict[str, Any]] = []
+    for period in raw_periods:
+        start_ts = period["start"]
+        end_ts = period["end"]
+
+        mask = (df_sorted["date_text"].dt.date >= start_ts.date()) & (
+            df_sorted["date_text"].dt.date <= end_ts.date()
+        )
+        chapter_df = df_sorted[mask]
+
+        total_plays = len(chapter_df)
+
+        # Top-5 artists
+        if "artist" in chapter_df.columns and not chapter_df.empty:
+            top_artists = chapter_df["artist"].value_counts().head(5).index.tolist()
+        else:
+            top_artists = []
+
+        # Top album
+        top_album: Optional[str] = None
+        if "album" in chapter_df.columns and not chapter_df.empty:
+            album_counts = chapter_df["album"].value_counts()
+            if not album_counts.empty:
+                top_album = str(album_counts.index[0])
+
+        # Discovery count: artists whose first-heard date falls in this chapter
+        discovery_count = 0
+        if not first_heard.empty and not chapter_df.empty and "artist" in chapter_df.columns:
+            chapter_artists = chapter_df["artist"].dropna().unique()
+            for artist in chapter_artists:
+                if artist in first_heard.index:
+                    fh = first_heard[artist]
+                    if start_ts.date() <= fh.date() <= end_ts.date():
+                        discovery_count += 1
+
+        # Chapter-exclusive artists: uniqueness score >= 0.8 with min_plays_exclusive plays
+        exclusive_artists: list[str] = []
+        if not chapter_df.empty and "artist" in chapter_df.columns and total_plays > 0:
+            chapter_counts = chapter_df["artist"].value_counts()
+            full_counts = df_sorted["artist"].value_counts()
+            qualified = chapter_counts[chapter_counts >= min_plays_exclusive]
+            for artist, ch_count in qualified.items():
+                full_count = full_counts.get(artist, ch_count)
+                if full_count > 0 and (ch_count / full_count) >= 0.8:
+                    exclusive_artists.append(str(artist))
+
+        chapters.append(
+            {
+                "label": period["label"],
+                "location": period["location"],
+                "start": start_ts,
+                "end": end_ts,
+                "total_plays": total_plays,
+                "top_artists": top_artists,
+                "top_album": top_album,
+                "discovery_count": discovery_count,
+                "exclusive_artists": exclusive_artists,
+            }
+        )
+
+    return chapters
+
+
 def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
     """Return monthly rank positions for the top N artists overall.
 
