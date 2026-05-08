@@ -474,6 +474,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
+    @patch("streamlit.selectbox")
     @patch("streamlit.info")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
@@ -498,6 +499,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_columns: MagicMock,
         mock_metric: MagicMock,
         mock_info: MagicMock,
+        mock_selectbox: MagicMock,
     ) -> None:
         df = self._make_full_df()
         assumptions = _make_assumptions(include_trips=True)
@@ -524,8 +526,9 @@ class TestRenderLifeInChapters(unittest.TestCase):
             return [col_mock, col_mock]
 
         mock_columns.side_effect = _columns_side_effect
-        # Range slider returns a (min, max) tuple
+        # Range slider returns a (min, max) tuple; selectbox returns "All years"
         mock_slider.return_value = (0, 9999)
+        mock_selectbox.return_value = "All years"
 
         with (
             patch(
@@ -610,6 +613,78 @@ class TestRenderLifeInChapters(unittest.TestCase):
 
         # st.info should be called because no chapters pass the filter
         mock_info.assert_called()
+
+    @patch("streamlit.selectbox")
+    @patch("streamlit.info")
+    @patch("streamlit.metric")
+    @patch("streamlit.columns")
+    @patch("streamlit.expander")
+    @patch("streamlit.header")
+    @patch("streamlit.caption")
+    @patch("streamlit.divider")
+    @patch("streamlit.markdown")
+    @patch("streamlit.subheader")
+    @patch("streamlit.container")
+    @patch("streamlit.slider")
+    def test_year_filter_limits_chapters(
+        self,
+        mock_slider: MagicMock,
+        mock_container: MagicMock,
+        mock_subheader: MagicMock,
+        mock_markdown: MagicMock,
+        mock_divider: MagicMock,
+        mock_caption: MagicMock,
+        mock_header: MagicMock,
+        mock_expander: MagicMock,
+        mock_columns: MagicMock,
+        mock_metric: MagicMock,
+        mock_info: MagicMock,
+        mock_selectbox: MagicMock,
+    ) -> None:
+        """Selecting a specific year shows only chapters that overlap that year."""
+        df = self._make_full_df()
+        # Two chapters: 2020 residency (3 plays) and 2021 trip (2 plays)
+        assumptions = _make_assumptions(include_trips=True)
+
+        expander_cm = MagicMock()
+        expander_cm.__enter__ = MagicMock(return_value=expander_cm)
+        expander_cm.__exit__ = MagicMock(return_value=False)
+        mock_expander.return_value = expander_cm
+
+        container_cm = MagicMock()
+        container_cm.__enter__ = MagicMock(return_value=container_cm)
+        container_cm.__exit__ = MagicMock(return_value=False)
+        mock_container.return_value = container_cm
+
+        col_mock = MagicMock()
+
+        def _columns_side_effect(spec: object) -> list[MagicMock]:
+            if isinstance(spec, int):
+                return [col_mock] * spec
+            if isinstance(spec, (list, tuple)):
+                return [col_mock] * len(spec)
+            return [col_mock, col_mock]
+
+        mock_columns.side_effect = _columns_side_effect
+        mock_slider.return_value = (0, 9999)
+        # Select 2020 — only the Reykjavik chapter should render
+        mock_selectbox.return_value = "2020"
+
+        rendered_subheaders: list[str] = []
+        mock_subheader.side_effect = rendered_subheaders.append
+
+        with (
+            patch(
+                "streamlit.session_state",
+                {"df": df, "_loaded_config": (None, None, None), "swarm_df": None},
+            ),
+            patch("pages.life_in_chapters.load_assumptions", return_value=assumptions),
+        ):
+            render_life_in_chapters()
+
+        # Only the 2020 Reykjavik chapter title should appear
+        self.assertIn("Reykjavik", rendered_subheaders)
+        self.assertNotIn("Berlin", rendered_subheaders)
 
 
 if __name__ == "__main__":

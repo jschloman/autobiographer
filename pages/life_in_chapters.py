@@ -216,8 +216,6 @@ def _render_trip_detector(assumptions: dict[str, Any]) -> None:
     Args:
         assumptions: Parsed assumptions dict (provides home residency lat/lng).
     """
-    st.subheader("Detect Trips from Swarm Data")
-
     swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
     if swarm_df is None or swarm_df.empty:
         st.info(
@@ -316,6 +314,10 @@ def render_life_in_chapters() -> None:
     assumptions_path: str | None = loaded_config[2] if loaded_config else None
     assumptions = load_assumptions(assumptions_path)
 
+    # ── Trip detector (collapsed by default) ──────────────────────────────────
+    with st.expander(":material/travel_explore: Detect trips from Swarm data", expanded=False):
+        _render_trip_detector(assumptions)
+
     has_residency = bool(assumptions.get("residency"))
     has_trips = bool(assumptions.get("trips"))
 
@@ -362,6 +364,21 @@ def render_life_in_chapters() -> None:
         )
         chapters = [c for c in chapters if min_plays <= c["total_plays"] <= max_plays]
 
+    # ── Year pagination ───────────────────────────────────────────────────────
+    all_years = sorted({yr for c in chapters for yr in range(c["start"].year, c["end"].year + 1)})
+    if len(all_years) > 1:
+        year_options = ["All years"] + [str(y) for y in all_years]
+        selected_year = st.selectbox(
+            "Jump to year",
+            year_options,
+            index=0,
+            key="chapter_year",
+            label_visibility="collapsed",
+        )
+        if selected_year != "All years":
+            yr = int(selected_year)
+            chapters = [c for c in chapters if c["start"].year <= yr <= c["end"].year]
+
     if not chapters:
         st.info("No chapters match the current filter.")
         return
@@ -379,8 +396,3 @@ def render_life_in_chapters() -> None:
         """,
         unsafe_allow_html=True,
     )
-
-    st.divider()
-
-    # ── Trip detector ─────────────────────────────────────────────────────────
-    _render_trip_detector(assumptions)
