@@ -102,7 +102,9 @@ def _save_detected_trips_cache(
         json.dump(trips, fh, indent=2)
 
 
-def _render_chapter_map(chapter: dict[str, Any], swarm_df: pd.DataFrame | None) -> None:
+def _render_chapter_map(
+    chapter: dict[str, Any], swarm_df: pd.DataFrame | None, chart_key: str
+) -> None:
     """Render a compact scatter map for a single chapter.
 
     Uses Swarm check-ins from the chapter's date range when available;
@@ -114,6 +116,8 @@ def _render_chapter_map(chapter: dict[str, Any], swarm_df: pd.DataFrame | None) 
             and optionally ``lat`` / ``lng``).
         swarm_df: Raw Swarm check-in DataFrame with ``timestamp``, ``lat``,
             ``lng``, and ``city`` columns, or ``None`` if unavailable.
+        chart_key: Unique Streamlit widget key to avoid duplicate element IDs
+            when multiple chapter maps are rendered on the same page.
     """
     chapter_lat: float | None = chapter.get("lat")
     chapter_lng: float | None = chapter.get("lng")
@@ -160,7 +164,7 @@ def _render_chapter_map(chapter: dict[str, Any], swarm_df: pd.DataFrame | None) 
         margin={"r": 0, "t": 0, "l": 0, "b": 0},
     )
     apply_dark_theme(fig)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width="stretch", key=chart_key)
 
 
 def _render_chapter_card(
@@ -275,7 +279,7 @@ def _render_chapter_card(
                 )
 
         # Chapter map
-        _render_chapter_map(chapter, swarm_df)
+        _render_chapter_map(chapter, swarm_df, chart_key=f"chapter_map_{index}")
 
 
 def _render_trip_detector(assumptions: dict[str, Any], detected_trips_path: str) -> None:
