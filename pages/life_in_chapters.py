@@ -8,12 +8,14 @@ artists, and top album.
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from analysis_utils import build_life_chapters, load_assumptions
+from analysis_utils import build_life_chapters, detect_trips_from_swarm, load_assumptions
 from components.theme import (
     ACCENT_INDIGO,
     AMBER,
@@ -22,6 +24,8 @@ from components.theme import (
     TEXT_DIM,
     TEXT_PRIMARY,
 )
+
+_DETECTED_TRIPS_CACHE = os.path.join("data", "cache", "detected_trips.json")
 
 
 def _format_date_range(start: pd.Timestamp, end: pd.Timestamp) -> str:
@@ -63,6 +67,37 @@ def _duration_label(start: pd.Timestamp, end: pd.Timestamp) -> str:
     if remainder == 0:
         return f"{years} year{'s' if years != 1 else ''}"
     return f"{years} yr {remainder} mo"
+
+
+def _load_detected_trips_cache(path: str = _DETECTED_TRIPS_CACHE) -> list[dict[str, Any]]:
+    """Load previously detected trips from the JSON cache file.
+
+    Args:
+        path: Path to the cache file.
+
+    Returns:
+        List of trip dicts, or an empty list if the file does not exist.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data: list[dict[str, Any]] = json.load(fh)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_detected_trips_cache(
+    trips: list[dict[str, Any]], path: str = _DETECTED_TRIPS_CACHE
+) -> None:
+    """Persist detected trips to a JSON cache file.
+
+    Args:
+        trips: List of trip dicts from ``detect_trips_from_swarm()``.
+        path: Destination file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(trips, fh, indent=2)
 
 
 def _render_chapter_card(chapter: dict[str, Any], index: int, total: int) -> None:
@@ -171,6 +206,88 @@ def _render_chapter_card(chapter: dict[str, Any], index: int, total: int) -> Non
                 )
 
 
+def _render_trip_detector(assumptions: dict[str, Any]) -> None:
+    """Render the Swarm-based trip detection section.
+
+    Allows the user to detect trips from Swarm check-in data by clustering
+    check-ins that are far from their home residency location.  Results are
+    saved to ``data/cache/detected_trips.json`` and displayed inline.
+
+    Args:
+        assumptions: Parsed assumptions dict (provides home residency lat/lng).
+    """
+    st.subheader("Detect Trips from Swarm Data")
+
+    swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
+    if swarm_df is None or swarm_df.empty:
+        st.info(
+            "No Swarm check-in data loaded. "
+            "Add a Swarm source in the sidebar to enable trip detection."
+        )
+        return
+
+    cached = _load_detected_trips_cache()
+    if cached:
+        st.caption(
+            f"Last run detected {len(cached)} trip(s). Results saved to `{_DETECTED_TRIPS_CACHE}`."
+        )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        radius_km = st.slider(
+            "Distance from home (km)",
+            min_value=20,
+            max_value=300,
+            value=80,
+            step=10,
+            key="trip_radius_km",
+        )
+    with col_b:
+        gap_days = st.slider(
+            "Days gap between trips",
+            min_value=1,
+            max_value=14,
+            value=2,
+            step=1,
+            key="trip_gap_days",
+        )
+
+    if st.button(":material/travel_explore: Detect trips", key="detect_trips_btn"):
+        with st.status("Detecting trips from Swarm check-ins…", expanded=True) as status:
+            trips = detect_trips_from_swarm(
+                swarm_df,
+                assumptions,
+                radius_km=float(radius_km),
+                gap_days=int(gap_days),
+                progress_cb=st.write,
+            )
+            _save_detected_trips_cache(trips)
+            label = f"Done — {len(trips)} trip(s) detected" if trips else "Done — no trips detected"
+            status.update(label=label, state="complete")
+
+        if trips:
+            st.success(
+                f"Detected **{len(trips)}** trip(s). "
+                f"Results saved to `{_DETECTED_TRIPS_CACHE}`. "
+                "Review and add to your assumptions file to show them on the timeline."
+            )
+            rows = [
+                {
+                    "Start": t["start"],
+                    "End": t["end"],
+                    "City": t["city"],
+                    "Country": t["country"],
+                    "Check-ins": t["checkin_count"],
+                }
+                for t in trips
+            ]
+            st.dataframe(rows, use_container_width=False)
+        else:
+            st.info(
+                "No trips detected with the current settings. Try reducing the distance threshold."
+            )
+
+
 def render_life_in_chapters() -> None:
     """Render the Life in Chapters geographic autobiography timeline page.
 
@@ -230,17 +347,20 @@ def render_life_in_chapters() -> None:
 
     st.divider()
 
-    # ── Expandable filter ─────────────────────────────────────────────────────
+    # ── Plays range filter ────────────────────────────────────────────────────
     with st.expander("Filter chapters", expanded=False):
-        min_plays_filter = st.slider(
-            "Minimum plays in chapter",
+        max_plays_val = max(c["total_plays"] for c in chapters)
+        # Guard against all-zero case (slider requires min < max or a fixed value)
+        slider_max = max_plays_val if max_plays_val > 0 else 1
+        min_plays, max_plays = st.slider(
+            "Plays range",
             min_value=0,
-            max_value=max(c["total_plays"] for c in chapters),
-            value=0,
+            max_value=slider_max,
+            value=(0, slider_max),
             step=10,
-            key="chapters_min_plays",
+            key="chapters_plays_range",
         )
-        chapters = [c for c in chapters if c["total_plays"] >= min_plays_filter]
+        chapters = [c for c in chapters if min_plays <= c["total_plays"] <= max_plays]
 
     if not chapters:
         st.info("No chapters match the current filter.")
@@ -259,3 +379,8 @@ def render_life_in_chapters() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    st.divider()
+
+    # ── Trip detector ─────────────────────────────────────────────────────────
+    _render_trip_detector(assumptions)

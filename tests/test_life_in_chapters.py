@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from analysis_utils import build_life_chapters
+from analysis_utils import build_life_chapters, detect_trips_from_swarm
 from pages.life_in_chapters import (
     _duration_label,
     _format_date_range,
+    _load_detected_trips_cache,
+    _save_detected_trips_cache,
     render_life_in_chapters,
 )
 
@@ -53,6 +57,8 @@ def _make_assumptions(include_trips: bool = True) -> dict:
                 "end": "2020-12-31",
                 "city": "Reykjavik",
                 "country": "Iceland",
+                "lat": 64.13,
+                "lng": -21.82,
             }
         ],
         "trips": [],
@@ -67,6 +73,26 @@ def _make_assumptions(include_trips: bool = True) -> dict:
             }
         ]
     return assumptions
+
+
+def _make_swarm_df(
+    lats: list[float],
+    lngs: list[float],
+    timestamps: list[int],
+    cities: list[str] | None = None,
+    countries: list[str] | None = None,
+) -> pd.DataFrame:
+    """Return a minimal Swarm check-in DataFrame for testing."""
+    n = len(lats)
+    return pd.DataFrame(
+        {
+            "lat": lats,
+            "lng": lngs,
+            "timestamp": timestamps,
+            "city": cities or ["TestCity"] * n,
+            "country": countries or ["TC"] * n,
+        }
+    )
 
 
 class TestFormatDateRange(unittest.TestCase):
@@ -266,6 +292,142 @@ class TestBuildLifeChapters(unittest.TestCase):
         self.assertIn("Paris", chapters[0]["label"])
 
 
+class TestDetectTripsFromSwarm(unittest.TestCase):
+    """Unit tests for detect_trips_from_swarm in analysis_utils."""
+
+    def _home_assumptions(self) -> dict:
+        """Assumptions with a home residency in Reykjavik (lat 64.13, lng -21.82)."""
+        return {
+            "residency": [
+                {
+                    "start": "2020-01-01",
+                    "end": "2025-12-31",
+                    "city": "Reykjavik",
+                    "country": "Iceland",
+                    "lat": 64.13,
+                    "lng": -21.82,
+                    "timezone": "Atlantic/Reykjavik",
+                }
+            ],
+            "trips": [],
+            "holidays": [],
+            "defaults": {},
+        }
+
+    def test_returns_empty_for_empty_df(self) -> None:
+        result = detect_trips_from_swarm(pd.DataFrame(), self._home_assumptions())
+        self.assertEqual(result, [])
+
+    def test_returns_empty_for_missing_columns(self) -> None:
+        df = pd.DataFrame({"lat": [1.0], "lng": [2.0]})  # no timestamp
+        result = detect_trips_from_swarm(df, self._home_assumptions())
+        self.assertEqual(result, [])
+
+    def test_home_checkins_not_included(self) -> None:
+        # Check-in right in Reykjavik — distance 0 km, should not trigger a trip
+        ts = int(pd.Timestamp("2021-06-01").timestamp())
+        df = _make_swarm_df([64.13], [-21.82], [ts])
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80)
+        self.assertEqual(result, [])
+
+    def test_far_checkins_detected_as_trip(self) -> None:
+        # Berlin is ~3000 km from Reykjavik
+        ts = int(pd.Timestamp("2021-06-01 12:00").timestamp())
+        df = _make_swarm_df([52.52], [13.40], [ts], cities=["Berlin"], countries=["Germany"])
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["city"], "Berlin")
+        self.assertEqual(result[0]["country"], "Germany")
+
+    def test_consecutive_checkins_merged_into_one_trip(self) -> None:
+        # Two check-ins 1 day apart — should form one cluster (gap_days=2)
+        ts1 = int(pd.Timestamp("2021-06-01").timestamp())
+        ts2 = int(pd.Timestamp("2021-06-02").timestamp())
+        df = _make_swarm_df([52.52, 52.52], [13.40, 13.40], [ts1, ts2])
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80, gap_days=2)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["checkin_count"], 2)
+
+    def test_gap_splits_into_two_trips(self) -> None:
+        # Two check-ins 10 days apart — should be two trips (gap_days=2)
+        ts1 = int(pd.Timestamp("2021-06-01").timestamp())
+        ts2 = int(pd.Timestamp("2021-06-15").timestamp())
+        df = _make_swarm_df([52.52, 48.86], [13.40, 2.35], [ts1, ts2])
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80, gap_days=2)
+        self.assertEqual(len(result), 2)
+
+    def test_trip_dict_has_required_keys(self) -> None:
+        ts = int(pd.Timestamp("2021-06-01 12:00").timestamp())
+        df = _make_swarm_df([52.52], [13.40], [ts])
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80)
+        self.assertEqual(len(result), 1)
+        required = {"start", "end", "city", "country", "lat", "lng", "checkin_count"}
+        self.assertTrue(required.issubset(result[0].keys()))
+
+    def test_progress_callback_called(self) -> None:
+        ts = int(pd.Timestamp("2021-06-01 12:00").timestamp())
+        df = _make_swarm_df([52.52], [13.40], [ts])
+        messages: list[str] = []
+        detect_trips_from_swarm(
+            df, self._home_assumptions(), radius_km=80, progress_cb=messages.append
+        )
+        self.assertTrue(len(messages) > 0)
+
+    def test_returns_empty_when_no_home_assumption(self) -> None:
+        ts = int(pd.Timestamp("2021-06-01 12:00").timestamp())
+        df = _make_swarm_df([52.52], [13.40], [ts])
+        empty_assumptions: dict = {"residency": [], "trips": [], "holidays": [], "defaults": {}}
+        result = detect_trips_from_swarm(df, empty_assumptions, radius_km=80)
+        self.assertEqual(result, [])
+
+    def test_most_common_city_used_for_cluster(self) -> None:
+        # Three Berlin check-ins + one Paris — Berlin should win
+        ts_base = int(pd.Timestamp("2021-06-01").timestamp())
+        one_day = 86_400
+        lats = [52.52, 52.52, 52.52, 48.86]
+        lngs = [13.40, 13.40, 13.40, 2.35]
+        timestamps = [ts_base, ts_base + one_day, ts_base + 2 * one_day, ts_base + 3 * one_day]
+        cities = ["Berlin", "Berlin", "Berlin", "Paris"]
+        countries = ["Germany", "Germany", "Germany", "France"]
+        df = _make_swarm_df(lats, lngs, timestamps, cities=cities, countries=countries)
+        result = detect_trips_from_swarm(df, self._home_assumptions(), radius_km=80, gap_days=5)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["city"], "Berlin")
+
+
+class TestCacheHelpers(unittest.TestCase):
+    """Unit tests for the JSON cache I/O helpers."""
+
+    def test_load_returns_empty_list_when_file_missing(self) -> None:
+        result = _load_detected_trips_cache("/nonexistent/path/trips.json")
+        self.assertEqual(result, [])
+
+    def test_save_and_load_roundtrip(self) -> None:
+        trips = [
+            {
+                "start": "2021-06-01",
+                "end": "2021-06-07",
+                "city": "Berlin",
+                "country": "Germany",
+                "lat": 52.52,
+                "lng": 13.40,
+                "checkin_count": 5,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "trips.json")
+            _save_detected_trips_cache(trips, path)
+            loaded = _load_detected_trips_cache(path)
+        self.assertEqual(loaded, trips)
+
+    def test_save_creates_parent_directories(self) -> None:
+        trips: list[dict] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "nested", "dir", "trips.json")
+            _save_detected_trips_cache(trips, path)
+            self.assertTrue(os.path.exists(path))
+
+
 class TestRenderLifeInChapters(unittest.TestCase):
     """Integration tests for the render_life_in_chapters Streamlit page function."""
 
@@ -312,6 +474,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
+    @patch("streamlit.info")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
     @patch("streamlit.expander")
@@ -334,6 +497,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_expander: MagicMock,
         mock_columns: MagicMock,
         mock_metric: MagicMock,
+        mock_info: MagicMock,
     ) -> None:
         df = self._make_full_df()
         assumptions = _make_assumptions(include_trips=True)
@@ -360,10 +524,14 @@ class TestRenderLifeInChapters(unittest.TestCase):
             return [col_mock, col_mock]
 
         mock_columns.side_effect = _columns_side_effect
-        mock_slider.return_value = 0
+        # Range slider returns a (min, max) tuple
+        mock_slider.return_value = (0, 9999)
 
         with (
-            patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
+            patch(
+                "streamlit.session_state",
+                {"df": df, "_loaded_config": (None, None, None), "swarm_df": None},
+            ),
             patch(
                 "pages.life_in_chapters.load_assumptions",
                 return_value=assumptions,
@@ -375,6 +543,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         # Banner metrics should be called
         self.assertTrue(mock_metric.called)
 
+    @patch("streamlit.info")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
     @patch("streamlit.expander")
@@ -385,10 +554,8 @@ class TestRenderLifeInChapters(unittest.TestCase):
     @patch("streamlit.subheader")
     @patch("streamlit.container")
     @patch("streamlit.slider")
-    @patch("streamlit.info")
     def test_filter_hides_low_play_chapters(
         self,
-        mock_info: MagicMock,
         mock_slider: MagicMock,
         mock_container: MagicMock,
         mock_subheader: MagicMock,
@@ -399,8 +566,9 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_expander: MagicMock,
         mock_columns: MagicMock,
         mock_metric: MagicMock,
+        mock_info: MagicMock,
     ) -> None:
-        """Chapters with plays below filter threshold are hidden."""
+        """Chapters with plays outside the filter range are hidden."""
         df = self._make_full_df()
         assumptions = _make_assumptions(include_trips=True)
 
@@ -425,11 +593,14 @@ class TestRenderLifeInChapters(unittest.TestCase):
 
         mock_columns.side_effect = _columns_side_effect
 
-        # Set filter high enough to exclude all chapters
-        mock_slider.return_value = 9999
+        # Set filter range so no chapters qualify (min=9999 > any chapter's plays)
+        mock_slider.return_value = (9999, 10000)
 
         with (
-            patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
+            patch(
+                "streamlit.session_state",
+                {"df": df, "_loaded_config": (None, None, None), "swarm_df": None},
+            ),
             patch(
                 "pages.life_in_chapters.load_assumptions",
                 return_value=assumptions,

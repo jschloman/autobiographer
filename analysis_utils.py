@@ -1,8 +1,9 @@
 import glob
 import hashlib
 import json
+import math
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -898,6 +899,134 @@ def build_life_chapters(
         )
 
     return chapters
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return the great-circle distance in kilometres between two WGS-84 points."""
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    cos1 = math.cos(math.radians(lat1))
+    cos2 = math.cos(math.radians(lat2))
+    a = math.sin(dlat / 2) ** 2 + cos1 * cos2 * math.sin(dlon / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def detect_trips_from_swarm(
+    swarm_df: pd.DataFrame,
+    assumptions: dict[str, Any],
+    radius_km: float = 80.0,
+    gap_days: int = 2,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> list[dict[str, Any]]:
+    """Detect trips from Swarm check-in data by clustering check-ins far from home.
+
+    For each check-in, the "home" location is resolved via ``get_assumption_location``
+    using the active residency + trip rules at that point in time.  Check-ins
+    beyond ``radius_km`` from home are collected, sorted chronologically, then
+    split into trip clusters whenever the gap between consecutive check-ins
+    exceeds ``gap_days``.
+
+    Args:
+        swarm_df: Swarm check-in DataFrame with at minimum ``timestamp``
+            (Unix int), ``lat``, ``lng``, ``city``, and ``country`` columns.
+        assumptions: Parsed assumptions dict from ``load_assumptions()``.
+        radius_km: Minimum distance from home (km) to count as "away" (default 80).
+        gap_days: Days gap between check-ins that starts a new trip cluster (default 2).
+        progress_cb: Optional callable that receives progress strings for streaming UI.
+
+    Returns:
+        List of trip dicts, each containing: ``start``, ``end`` (ISO date strings),
+        ``city``, ``country``, ``lat``, ``lng`` (centroid), ``checkin_count`` (int).
+    """
+    if swarm_df.empty:
+        return []
+
+    required = {"lat", "lng", "timestamp"}
+    if not required.issubset(swarm_df.columns):
+        return []
+
+    def log(msg: str) -> None:
+        if progress_cb:
+            progress_cb(msg)
+
+    df = swarm_df.dropna(subset=["lat", "lng"]).copy()
+    df = df[df["lat"] != 0].copy()
+    log(f"Analysing {len(df):,} check-ins with location data…")
+
+    away: list[dict[str, Any]] = []
+    skipped = 0
+
+    for _, row in df.iterrows():
+        ts = int(row["timestamp"])
+        home = get_assumption_location(ts, assumptions)
+        if home is None or home.get("lat") is None or home.get("lng") is None:
+            skipped += 1
+            continue
+
+        dist = _haversine_km(
+            float(home["lat"]), float(home["lng"]), float(row["lat"]), float(row["lng"])
+        )
+        if dist >= radius_km:
+            away.append(
+                {
+                    "timestamp": ts,
+                    "lat": float(row["lat"]),
+                    "lng": float(row["lng"]),
+                    "city": str(row.get("city", "") or ""),
+                    "country": str(row.get("country", "") or ""),
+                }
+            )
+
+    log(
+        f"Found {len(away):,} away-from-home check-ins (>{radius_km:.0f} km). "
+        f"Skipped {skipped:,} without a home reference."
+    )
+
+    if not away:
+        return []
+
+    away.sort(key=lambda x: x["timestamp"])
+
+    gap_seconds = gap_days * 86_400
+    clusters: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = [away[0]]
+    for checkin in away[1:]:
+        if checkin["timestamp"] - current[-1]["timestamp"] <= gap_seconds:
+            current.append(checkin)
+        else:
+            clusters.append(current)
+            current = [checkin]
+    clusters.append(current)
+
+    log(f"Clustered into {len(clusters)} trip(s) using a {gap_days}-day gap.")
+
+    trips: list[dict[str, Any]] = []
+    for cluster in clusters:
+        start_dt = pd.to_datetime(cluster[0]["timestamp"], unit="s", utc=True)
+        end_dt = pd.to_datetime(cluster[-1]["timestamp"], unit="s", utc=True)
+
+        cities = [c["city"] for c in cluster if c["city"]]
+        countries = [c["country"] for c in cluster if c["country"]]
+        top_city = max(set(cities), key=cities.count) if cities else "Unknown"
+        top_country = max(set(countries), key=countries.count) if countries else ""
+
+        mean_lat = sum(c["lat"] for c in cluster) / len(cluster)
+        mean_lng = sum(c["lng"] for c in cluster) / len(cluster)
+
+        trips.append(
+            {
+                "start": start_dt.strftime("%Y-%m-%d"),
+                "end": end_dt.strftime("%Y-%m-%d"),
+                "city": top_city,
+                "country": top_country,
+                "lat": round(mean_lat, 4),
+                "lng": round(mean_lng, 4),
+                "checkin_count": len(cluster),
+            }
+        )
+
+    return trips
 
 
 def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
