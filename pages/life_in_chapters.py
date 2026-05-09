@@ -10,6 +10,8 @@ compares listening behaviour across all detected trip periods.
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 import pandas as pd
@@ -20,6 +22,7 @@ from analysis_utils import (
     build_life_chapters,
     compute_vacation_stats,
     detect_trip_periods,
+    detect_trips_from_swarm,
     label_listening_context,
     load_assumptions,
 )
@@ -34,6 +37,8 @@ from components.theme import (
     TEXT_PRIMARY,
     apply_dark_theme,
 )
+
+_DETECTED_TRIPS_CACHE = os.path.join("data", "cache", "detected_trips.json")
 
 
 def _format_date_range(start: pd.Timestamp, end: pd.Timestamp) -> str:
@@ -75,6 +80,162 @@ def _duration_label(start: pd.Timestamp, end: pd.Timestamp) -> str:
     if remainder == 0:
         return f"{years} year{'s' if years != 1 else ''}"
     return f"{years} yr {remainder} mo"
+
+
+def _load_detected_trips_cache(path: str = _DETECTED_TRIPS_CACHE) -> list[dict[str, Any]]:
+    """Load previously detected trips from the JSON cache file.
+
+    Args:
+        path: Path to the cache file.
+
+    Returns:
+        List of trip dicts, or an empty list if the file does not exist.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data: list[dict[str, Any]] = json.load(fh)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_detected_trips_cache(
+    trips: list[dict[str, Any]], path: str = _DETECTED_TRIPS_CACHE
+) -> None:
+    """Persist detected trips to a JSON cache file.
+
+    Args:
+        trips: List of trip dicts from ``detect_trips_from_swarm()``.
+        path: Destination file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(trips, fh, indent=2)
+
+
+def _render_chapter_map(
+    chapter: dict[str, Any], swarm_df: pd.DataFrame | None, chart_key: str, accent: str
+) -> None:
+    """Render a compact scatter map for a single chapter.
+
+    Uses Swarm check-ins from the chapter's date range when available;
+    falls back to a single marker at the chapter's lat/lng if present.
+    Skips silently if no geographic data exists for the chapter.
+
+    Args:
+        chapter: Chapter dict including ``start``, ``end``, ``label``, and
+            optionally ``lat`` / ``lng``.
+        swarm_df: Raw Swarm check-in DataFrame with ``timestamp``, ``lat``,
+            ``lng``, and ``city`` columns, or ``None`` if unavailable.
+        chart_key: Unique Streamlit widget key to avoid duplicate element IDs.
+        accent: Accent colour for the map markers (orange for trips, indigo for residency).
+    """
+    chapter_lat: float | None = chapter.get("lat")
+    chapter_lng: float | None = chapter.get("lng")
+
+    map_df: pd.DataFrame | None = None
+
+    if swarm_df is not None and not swarm_df.empty:
+        required = {"timestamp", "lat", "lng"}
+        if required.issubset(swarm_df.columns):
+            dt = pd.to_datetime(swarm_df["timestamp"], unit="s", utc=True).dt.date
+            mask = (dt >= chapter["start"].date()) & (dt <= chapter["end"].date())
+            chapter_swarm = swarm_df[mask].dropna(subset=["lat", "lng"])
+            chapter_swarm = chapter_swarm[chapter_swarm["lat"] != 0]
+            if not chapter_swarm.empty:
+                group_cols = [c for c in ["city", "lat", "lng"] if c in chapter_swarm.columns]
+                map_df = chapter_swarm.groupby(group_cols).size().reset_index(name="checkins")
+                if "city" not in map_df.columns:
+                    map_df["city"] = chapter["label"]
+
+    if map_df is None or map_df.empty:
+        if chapter_lat is None or chapter_lng is None:
+            return
+        map_df = pd.DataFrame(
+            [{"city": chapter["label"], "lat": chapter_lat, "lng": chapter_lng, "checkins": 1}]
+        )
+
+    center_lat = chapter_lat if chapter_lat is not None else float(map_df["lat"].mean())
+    center_lng = chapter_lng if chapter_lng is not None else float(map_df["lng"].mean())
+
+    fig = px.scatter_map(
+        map_df,
+        lat="lat",
+        lon="lng",
+        size="checkins",
+        size_max=20,
+        hover_name="city",
+        color_discrete_sequence=[accent],
+        zoom=5,
+        center={"lat": center_lat, "lon": center_lng},
+    )
+    fig.update_layout(
+        map_style="carto-darkmatter",
+        height=220,
+        margin={"r": 0, "t": 0, "l": 0, "b": 0},
+    )
+    apply_dark_theme(fig)
+    st.plotly_chart(fig, width="stretch", key=chart_key)
+
+
+def _render_trip_detector(assumptions: dict[str, Any], detected_trips_path: str) -> None:
+    """Render the Swarm-based trip detection section.
+
+    Clusters check-ins that are geographically far from the user's home
+    residency.  Results are saved to ``detected_trips_path`` and the page
+    refreshes so the new trips immediately appear on the timeline.
+
+    Args:
+        assumptions: Parsed assumptions dict (provides home residency lat/lng).
+        detected_trips_path: File path where detected trips JSON is saved/loaded.
+    """
+    swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
+    if swarm_df is None or swarm_df.empty:
+        st.info(
+            "No Swarm check-in data loaded. "
+            "Add a Swarm source in the sidebar to enable trip detection."
+        )
+        return
+
+    cached = _load_detected_trips_cache(detected_trips_path)
+    if cached:
+        st.caption(
+            f"Last run detected {len(cached)} trip(s). Results saved to `{detected_trips_path}`."
+        )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        radius_km = st.slider(
+            "Distance from home (km)",
+            min_value=20,
+            max_value=300,
+            value=80,
+            step=10,
+            key="trip_radius_km",
+        )
+    with col_b:
+        gap_days = st.slider(
+            "Days gap between trips",
+            min_value=1,
+            max_value=14,
+            value=2,
+            step=1,
+            key="trip_gap_days",
+        )
+
+    if st.button(":material/travel_explore: Detect trips", key="detect_trips_btn"):
+        with st.status("Detecting trips from Swarm check-ins…", expanded=True) as status:
+            trips = detect_trips_from_swarm(
+                swarm_df,
+                assumptions,
+                radius_km=float(radius_km),
+                gap_days=int(gap_days),
+                progress_cb=st.write,
+            )
+            _save_detected_trips_cache(trips, detected_trips_path)
+            label = f"Done — {len(trips)} trip(s) detected" if trips else "Done — no trips detected"
+            status.update(label=label, state="complete")
+        st.rerun()
 
 
 def _render_on_the_road(
@@ -307,12 +468,14 @@ def _render_chapter_card(
     total: int,
     df_labeled: pd.DataFrame,
     trip_periods: list[tuple[pd.Timestamp, pd.Timestamp]],
+    swarm_df: pd.DataFrame | None = None,
 ) -> None:
     """Render a single chapter as a styled Streamlit card with a connector line.
 
     Trip chapters use an orange accent; residency chapters use indigo.
     Residency chapters that contain trip periods include an expandable
-    Home vs. Trip breakdown.
+    Home vs. Trip breakdown.  A compact scatter map shows Swarm check-ins
+    (or a single marker from lat/lng) for the chapter's date range.
 
     Args:
         chapter: Chapter dict from ``build_life_chapters()``.
@@ -320,6 +483,7 @@ def _render_chapter_card(
         total: Total number of chapters (used to suppress the trailing line).
         df_labeled: Full labeled listening history for the comparison section.
         trip_periods: All trip periods detected for the page.
+        swarm_df: Raw Swarm check-in DataFrame for map rendering, or None.
     """
     start: pd.Timestamp = chapter["start"]
     end: pd.Timestamp = chapter["end"]
@@ -423,6 +587,9 @@ def _render_chapter_card(
             if chapter_trips:
                 _render_on_the_road(df_labeled, start, end, chapter_trips)
 
+        # Chapter map — Swarm check-ins or fallback lat/lng marker
+        _render_chapter_map(chapter, swarm_df, chart_key=f"chapter_map_{index}", accent=accent)
+
 
 def render_life_in_chapters() -> None:
     """Render the Life in Chapters geographic autobiography timeline page.
@@ -452,27 +619,44 @@ def render_life_in_chapters() -> None:
     loaded_config = st.session_state.get("_loaded_config")
     assumptions_path: str | None = loaded_config[2] if loaded_config else None
     assumptions = load_assumptions(assumptions_path)
+    swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
+
+    # Resolve detected trips cache path (configurable via Location Assumptions plugin)
+    detected_trips_path: str = (
+        st.session_state.get("assumptions_detected_trips_file") or _DETECTED_TRIPS_CACHE
+    )
+
+    # ── Swarm trip detector (collapsed by default) ────────────────────────────
+    with st.expander(":material/travel_explore: Detect trips from Swarm data", expanded=False):
+        _render_trip_detector(assumptions, detected_trips_path)
 
     has_residency = bool(assumptions.get("residency"))
     has_trips = bool(assumptions.get("trips"))
 
-    if not has_residency and not has_trips:
+    # Merge auto-detected trips from cache into assumptions
+    detected_trips = _load_detected_trips_cache(detected_trips_path)
+    if detected_trips:
+        merged_assumptions: dict[str, Any] = dict(assumptions)
+        merged_assumptions["trips"] = list(assumptions.get("trips", [])) + detected_trips
+    else:
+        merged_assumptions = assumptions
+
+    if not has_residency and not (has_trips or detected_trips):
         st.warning(
             "No residency or trip data found in your assumptions file. "
             "Add `residency` and/or `trips` entries to see your life chapters."
         )
         return
 
-    chapters = build_life_chapters(df, assumptions)
+    chapters = build_life_chapters(df, merged_assumptions)
 
     if not chapters:
         st.info("No chapters could be built from the assumptions data.")
         return
 
     # Detect trip periods and label the full listening history
-    swarm_df: pd.DataFrame | None = st.session_state.get("swarm_df")
     trip_periods = detect_trip_periods(
-        assumptions,
+        merged_assumptions,
         swarm_df=swarm_df if swarm_df is not None else pd.DataFrame(),
     )
     df_labeled = label_listening_context(df, trip_periods)
@@ -492,17 +676,34 @@ def render_life_in_chapters() -> None:
 
     st.divider()
 
-    # ── Expandable filter ─────────────────────────────────────────────────────
+    # ── Filters ───────────────────────────────────────────────────────────────
     with st.expander("Filter chapters", expanded=False):
+        max_plays_val = max(c["total_plays"] for c in chapters)
+        slider_max = max_plays_val if max_plays_val > 0 else 1
         min_plays_filter = st.slider(
             "Minimum plays in chapter",
             min_value=0,
-            max_value=max(c["total_plays"] for c in chapters),
+            max_value=slider_max,
             value=0,
             step=10,
             key="chapters_min_plays",
         )
         chapters = [c for c in chapters if c["total_plays"] >= min_plays_filter]
+
+    # ── Year jump ─────────────────────────────────────────────────────────────
+    all_years = sorted({yr for c in chapters for yr in range(c["start"].year, c["end"].year + 1)})
+    if len(all_years) > 1:
+        year_options = ["All years"] + [str(y) for y in all_years]
+        selected_year = st.selectbox(
+            "Jump to year",
+            year_options,
+            index=0,
+            key="chapter_year",
+            label_visibility="collapsed",
+        )
+        if selected_year != "All years":
+            yr = int(selected_year)
+            chapters = [c for c in chapters if c["start"].year <= yr <= c["end"].year]
 
     if not chapters:
         st.info("No chapters match the current filter.")
@@ -510,7 +711,7 @@ def render_life_in_chapters() -> None:
 
     # ── Timeline ─────────────────────────────────────────────────────────────
     for i, chapter in enumerate(chapters):
-        _render_chapter_card(chapter, i, len(chapters), df_labeled, trip_periods)
+        _render_chapter_card(chapter, i, len(chapters), df_labeled, trip_periods, swarm_df)
 
     # Trailing connector end-cap
     st.markdown(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -324,11 +325,15 @@ class TestRenderLifeInChapters(unittest.TestCase):
         }
         with (
             patch("streamlit.session_state", {"df": df, "_loaded_config": None}),
-            patch(
-                "pages.life_in_chapters.load_assumptions",
-                return_value=assumptions_no_periods,
-            ),
+            patch("pages.life_in_chapters.load_assumptions", return_value=assumptions_no_periods),
+            patch("pages.life_in_chapters._render_trip_detector"),
+            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
+            patch("streamlit.expander") as mock_expander,
         ):
+            exp_cm = MagicMock()
+            exp_cm.__enter__ = MagicMock(return_value=exp_cm)
+            exp_cm.__exit__ = MagicMock(return_value=False)
+            mock_expander.return_value = exp_cm
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
@@ -385,6 +390,9 @@ class TestRenderLifeInChapters(unittest.TestCase):
             patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
             patch("pages.life_in_chapters.load_assumptions", return_value=assumptions),
             patch("pages.life_in_chapters._render_home_vs_trip_summary"),
+            patch("pages.life_in_chapters._render_trip_detector"),
+            patch("pages.life_in_chapters._render_chapter_map"),
+            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
         ):
             render_life_in_chapters()
 
@@ -448,6 +456,9 @@ class TestRenderLifeInChapters(unittest.TestCase):
             patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
             patch("pages.life_in_chapters.load_assumptions", return_value=assumptions),
             patch("pages.life_in_chapters._render_home_vs_trip_summary"),
+            patch("pages.life_in_chapters._render_trip_detector"),
+            patch("pages.life_in_chapters._render_chapter_map"),
+            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
         ):
             render_life_in_chapters()
 
@@ -641,6 +652,141 @@ class TestRenderOnTheRoad(unittest.TestCase):
                 [(pd.Timestamp("2021-01-08"), pd.Timestamp("2021-01-09"))],
             )
             mock_expander.assert_not_called()
+
+
+class TestDetectedTripsCache(unittest.TestCase):
+    """Tests for _load_detected_trips_cache and _save_detected_trips_cache."""
+
+    def test_load_returns_empty_for_missing_file(self) -> None:
+        from pages.life_in_chapters import _load_detected_trips_cache
+
+        result = _load_detected_trips_cache("/nonexistent/path/trips.json")
+        self.assertEqual(result, [])
+
+    def test_save_and_load_roundtrip(self) -> None:
+        import tempfile
+
+        from pages.life_in_chapters import _load_detected_trips_cache, _save_detected_trips_cache
+
+        trips = [{"start": "2021-01-01", "end": "2021-01-07", "city": "Paris"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "trips.json")
+            _save_detected_trips_cache(trips, path)
+            loaded = _load_detected_trips_cache(path)
+        self.assertEqual(loaded, trips)
+
+    def test_load_returns_empty_for_invalid_json(self) -> None:
+        import tempfile
+
+        from pages.life_in_chapters import _load_detected_trips_cache
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+            fh.write("not valid json{")
+            path = fh.name
+        result = _load_detected_trips_cache(path)
+        os.unlink(path)
+        self.assertEqual(result, [])
+
+
+class TestHaversineAndDetectTripsFromSwarm(unittest.TestCase):
+    """Tests for _haversine_km and detect_trips_from_swarm in analysis_utils."""
+
+    def test_haversine_same_point_is_zero(self) -> None:
+        from analysis_utils import _haversine_km  # type: ignore[attr-defined]
+
+        self.assertAlmostEqual(_haversine_km(64.0, -22.0, 64.0, -22.0), 0.0, places=5)
+
+    def test_haversine_known_distance(self) -> None:
+        from analysis_utils import _haversine_km  # type: ignore[attr-defined]
+
+        # Reykjavik to London ≈ 1887 km
+        dist = _haversine_km(64.13, -21.82, 51.51, -0.13)
+        self.assertGreater(dist, 1700)
+        self.assertLess(dist, 2100)
+
+    def _assumptions_with_home(self) -> dict:
+        return {
+            "residency": [
+                {
+                    "start": "2020-01-01",
+                    "end": "2025-12-31",
+                    "city": "Reykjavik",
+                    "country": "IS",
+                    "lat": 64.13,
+                    "lng": -21.82,
+                }
+            ],
+            "trips": [],
+            "holidays": [],
+            "defaults": {"city": "Reykjavik"},
+        }
+
+    def test_detect_trips_empty_swarm_returns_empty(self) -> None:
+        from analysis_utils import detect_trips_from_swarm
+
+        result = detect_trips_from_swarm(pd.DataFrame(), self._assumptions_with_home())
+        self.assertEqual(result, [])
+
+    def test_detect_trips_missing_columns_returns_empty(self) -> None:
+        from analysis_utils import detect_trips_from_swarm
+
+        df = pd.DataFrame({"city": ["London"]})
+        result = detect_trips_from_swarm(df, self._assumptions_with_home())
+        self.assertEqual(result, [])
+
+    def test_detect_trips_finds_away_cluster(self) -> None:
+        from analysis_utils import detect_trips_from_swarm
+
+        # Two consecutive check-ins in London (>80 km from Reykjavik)
+        swarm_df = pd.DataFrame(
+            {
+                "timestamp": [
+                    int(pd.Timestamp("2021-06-01").timestamp()),
+                    int(pd.Timestamp("2021-06-02").timestamp()),
+                ],
+                "lat": [51.51, 51.52],
+                "lng": [-0.13, -0.12],
+                "city": ["London", "London"],
+                "country": ["GB", "GB"],
+            }
+        )
+        result = detect_trips_from_swarm(swarm_df, self._assumptions_with_home(), radius_km=80)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["city"], "London")
+        self.assertIn("start", result[0])
+        self.assertIn("end", result[0])
+
+
+class TestRenderChapterMap(unittest.TestCase):
+    """Tests for _render_chapter_map."""
+
+    def _make_chapter(self) -> dict:
+        return {
+            "label": "Reykjavik",
+            "start": pd.Timestamp("2020-01-01"),
+            "end": pd.Timestamp("2020-12-31"),
+            "lat": 64.13,
+            "lng": -21.82,
+        }
+
+    def test_skips_when_no_swarm_and_no_lat_lng(self) -> None:
+        from pages.life_in_chapters import _render_chapter_map
+
+        chapter = {
+            "label": "X",
+            "start": pd.Timestamp("2020-01-01"),
+            "end": pd.Timestamp("2020-12-31"),
+        }
+        with patch("streamlit.plotly_chart") as mock_chart:
+            _render_chapter_map(chapter, None, "key_0", "#6366f1")
+            mock_chart.assert_not_called()
+
+    @patch("streamlit.plotly_chart")
+    def test_renders_fallback_marker_when_no_swarm(self, mock_chart: MagicMock) -> None:
+        from pages.life_in_chapters import _render_chapter_map
+
+        _render_chapter_map(self._make_chapter(), None, "key_1", "#6366f1")
+        mock_chart.assert_called_once()
 
 
 if __name__ == "__main__":
