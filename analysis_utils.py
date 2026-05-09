@@ -746,6 +746,151 @@ def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     return weekly.rename(columns={"artist": "genre"})
 
 
+def detect_trip_periods(
+    assumptions: dict[str, Any],
+    swarm_df: Optional[pd.DataFrame] = None,
+    home_city: Optional[str] = None,
+    min_consecutive_days: int = 2,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Detect trip date ranges from assumptions and Swarm check-ins.
+
+    Combines two sources:
+    1. Explicit ``assumptions["trips"]`` date ranges.
+    2. Swarm check-ins where the city differs from the home city for two or
+       more consecutive days.
+
+    Args:
+        assumptions: Loaded assumptions dict (from :func:`load_assumptions`).
+        swarm_df: Optional Swarm check-in DataFrame with ``timestamp`` and
+            ``city`` columns.
+        home_city: The city to treat as home.  Defaults to
+            ``assumptions["defaults"]["city"]`` when not provided.
+        min_consecutive_days: Minimum consecutive away-days to qualify as a
+            trip when detected from Swarm data.  Defaults to 2.
+
+    Returns:
+        Sorted list of ``(start, end)`` ``pd.Timestamp`` pairs (date
+        precision) representing trip date ranges.  Overlapping ranges from
+        different sources are kept as-is; callers may merge if needed.
+    """
+    periods: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+
+    for trip in assumptions.get("trips", []):
+        try:
+            start = pd.Timestamp(trip["start"]).normalize()
+            end = pd.Timestamp(trip["end"]).normalize()
+            if start <= end:
+                periods.append((start, end))
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if swarm_df is not None and not swarm_df.empty and "timestamp" in swarm_df.columns:
+        resolved_home = home_city or assumptions.get("defaults", {}).get("city", "")
+
+        sw = swarm_df.copy()
+        sw["date"] = pd.to_datetime(sw["timestamp"], unit="s").dt.normalize()
+        daily = sw.sort_values("timestamp").groupby("date")["city"].last().reset_index()
+
+        if resolved_home:
+            away = daily[daily["city"].str.lower() != resolved_home.lower()].copy()
+        else:
+            away = daily.copy()
+
+        if not away.empty:
+            away = away.sort_values("date").reset_index(drop=True)
+            away["gap"] = away["date"].diff().dt.days.fillna(1)
+            away["run"] = (away["gap"] > 1).cumsum()
+            for _, run_df in away.groupby("run"):
+                if len(run_df) >= min_consecutive_days:
+                    periods.append((run_df["date"].min(), run_df["date"].max()))
+
+    periods.sort(key=lambda t: t[0])
+    return periods
+
+
+def label_listening_context(
+    lastfm_df: pd.DataFrame,
+    trip_periods: list[tuple[pd.Timestamp, pd.Timestamp]],
+) -> pd.DataFrame:
+    """Label each Last.fm row as ``'trip'`` or ``'home'`` based on trip periods.
+
+    Args:
+        lastfm_df: Listening history with a ``date_text`` column.
+        trip_periods: Sorted list of ``(start, end)`` Timestamp pairs from
+            :func:`detect_trip_periods`.
+
+    Returns:
+        Copy of ``lastfm_df`` with a new ``context`` column (``'home'`` or
+        ``'trip'``).
+    """
+    if lastfm_df.empty:
+        df = lastfm_df.copy()
+        df["context"] = pd.Series(dtype="str")
+        return df
+
+    df = lastfm_df.copy()
+    df["context"] = "home"
+
+    if not trip_periods:
+        return df
+
+    dates = df["date_text"].dt.normalize()
+    for start, end in trip_periods:
+        mask = (dates >= start) & (dates <= end)
+        df.loc[mask, "context"] = "trip"
+
+    return df
+
+
+def compute_vacation_stats(df: pd.DataFrame) -> dict[str, Any]:
+    """Compute per-context listening statistics for Home vs. Trip comparisons.
+
+    Calculates the following metrics for each context group (``'home'`` and
+    ``'trip'``): average daily scrobbles, unique artists per day, estimated
+    listening hours, and top artist.
+
+    Args:
+        df: Listening history with ``date_text``, ``artist``, and ``context``
+            columns (as produced by :func:`label_listening_context`).
+
+    Returns:
+        Dict keyed by context string (``'home'``, ``'trip'``), each value
+        being a dict of metric name → value.  Missing contexts return an
+        empty metric dict.
+    """
+    results: dict[str, Any] = {}
+
+    if df.empty or "context" not in df.columns:
+        return results
+
+    for ctx in ("home", "trip"):
+        sub = df[df["context"] == ctx]
+        if sub.empty:
+            results[ctx] = {}
+            continue
+
+        unique_days = sub["date_text"].dt.normalize().nunique()
+        unique_days = max(unique_days, 1)
+        total_plays = len(sub)
+        avg_daily = round(total_plays / unique_days, 1)
+        hours = round(total_plays * 3.5 / 60, 1)
+        unique_artists_per_day = round(
+            sub.groupby(sub["date_text"].dt.normalize())["artist"].nunique().mean(), 1
+        )
+        top_artist = sub["artist"].value_counts().index[0] if not sub.empty else "—"
+
+        results[ctx] = {
+            "avg_daily_scrobbles": avg_daily,
+            "unique_artists_per_day": unique_artists_per_day,
+            "listening_hours": hours,
+            "top_artist": top_artist,
+            "total_plays": total_plays,
+            "unique_days": unique_days,
+        }
+
+    return results
+
+
 def build_life_chapters(
     df: pd.DataFrame,
     assumptions: dict[str, Any],
@@ -889,6 +1034,7 @@ def build_life_chapters(
                 "location": period["location"],
                 "start": start_ts,
                 "end": end_ts,
+                "kind": period["kind"],
                 "total_plays": total_plays,
                 "top_artists": top_artists,
                 "top_album": top_album,
