@@ -54,7 +54,7 @@ from components.theme import (
 _LATE_NIGHT_START = 0
 _LATE_NIGHT_END = 4  # hours 0, 1, 2, 3 (exclusive upper bound)
 _SESSION_GAP_MINUTES = 30
-_DINING_WINDOW_HOURS = 2
+_DINING_WINDOW_MINUTES = 30  # ±30 min around each food/drink check-in
 
 _FOOD_DRINK_CATEGORIES: list[str] = [
     "Restaurants",
@@ -172,6 +172,17 @@ def _add_location_context(df: pd.DataFrame, home_city: str) -> pd.DataFrame:
     return out
 
 
+_DAY_ORDER: list[str] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+
+
 def _compute_week_stats(df: pd.DataFrame, home_city: str) -> list[dict[str, Any]]:
     """Compute per-context statistics for the four (is_weekend × is_home) cells.
 
@@ -180,7 +191,8 @@ def _compute_week_stats(df: pd.DataFrame, home_city: str) -> list[dict[str, Any]
         home_city: The user's home city string.
 
     Returns:
-        List of four stat dicts in ``_GRID_ORDER`` order.
+        List of four stat dicts in ``_GRID_ORDER`` order, each with a
+        ``subset`` key for the raw rows and a ``peak_hour`` key.
     """
     enriched = _add_weekend_columns(_add_location_context(df, home_city))
     stats: list[dict[str, Any]] = []
@@ -213,6 +225,51 @@ def _compute_week_stats(df: pd.DataFrame, home_city: str) -> list[dict[str, Any]
     return stats
 
 
+def _compute_week_by_day(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """Compute top-10 artists and albums for each day of the week.
+
+    Args:
+        df: Listening history with ``date_text``, ``artist``, ``album`` columns.
+
+    Returns:
+        Dict mapping day name (e.g. ``"Monday"``) to a dict with keys
+        ``play_count`` (int), ``top_artists`` (DataFrame), ``top_albums`` (DataFrame).
+    """
+    by_day: dict[str, dict[str, Any]] = {}
+    if df.empty or "date_text" not in df.columns:
+        for day in _DAY_ORDER:
+            by_day[day] = {
+                "play_count": 0,
+                "top_artists": pd.DataFrame(),
+                "top_albums": pd.DataFrame(),
+            }
+        return by_day
+
+    enriched = df.copy()
+    enriched["day_of_week"] = enriched["date_text"].dt.day_name()
+
+    for day in _DAY_ORDER:
+        subset = enriched[enriched["day_of_week"] == day]
+        by_day[day] = {
+            "play_count": len(subset),
+            "top_artists": subset["artist"]
+            .value_counts()
+            .head(10)
+            .reset_index()
+            .rename(columns={"artist": "Artist", "count": "Plays"})
+            if not subset.empty and "artist" in subset.columns
+            else pd.DataFrame(),
+            "top_albums": subset["album"]
+            .value_counts()
+            .head(10)
+            .reset_index()
+            .rename(columns={"album": "Album", "count": "Plays"})
+            if not subset.empty and "album" in subset.columns
+            else pd.DataFrame(),
+        }
+    return by_day
+
+
 # ---------------------------------------------------------------------------
 # Dining helpers
 # ---------------------------------------------------------------------------
@@ -237,21 +294,21 @@ def _classify_venue_category(raw_category: str) -> str | None:
 def _listens_around_checkin(
     lastfm_df: pd.DataFrame,
     checkin_ts: int,
-    window_hours: int = _DINING_WINDOW_HOURS,
+    window_minutes: int = _DINING_WINDOW_MINUTES,
 ) -> pd.DataFrame:
-    """Return Last.fm listens within ±``window_hours`` of *checkin_ts*.
+    """Return Last.fm listens within ±``window_minutes`` of *checkin_ts*.
 
     Args:
         lastfm_df: Listening history with a ``timestamp`` column.
         checkin_ts: Unix timestamp of the Swarm check-in.
-        window_hours: Symmetric window size in hours.
+        window_minutes: Symmetric window size in minutes.
 
     Returns:
         Subset of ``lastfm_df`` within the window; may be empty.
     """
     if lastfm_df.empty or "timestamp" not in lastfm_df.columns:
         return pd.DataFrame()
-    window_sec = window_hours * 3600
+    window_sec = window_minutes * 60
     mask = (lastfm_df["timestamp"] >= checkin_ts - window_sec) & (
         lastfm_df["timestamp"] <= checkin_ts + window_sec
     )
@@ -261,19 +318,22 @@ def _listens_around_checkin(
 def get_dining_soundtrack_data(
     swarm_df: pd.DataFrame,
     lastfm_df: pd.DataFrame,
-    top_n: int = 5,
+    top_n: int = 10,
 ) -> dict[str, dict[str, Any]]:
     """Aggregate Last.fm listens around food/drink check-ins by venue bucket.
 
+    Uses a ±:data:`_DINING_WINDOW_MINUTES` window around each Swarm check-in.
+
     Args:
         swarm_df: Swarm DataFrame with ``timestamp`` and ``venue_category``.
-        lastfm_df: Listening history with ``timestamp``, ``artist``, ``date_text``.
-        top_n: Maximum top artists to return per bucket.
+        lastfm_df: Listening history with ``timestamp``, ``artist``, ``album``,
+            ``date_text``.
+        top_n: Maximum top artists/albums to return per bucket.
 
     Returns:
         Dict keyed by venue category bucket.  Each value has:
-        ``top_artists`` (DataFrame), ``checkin_count`` (int),
-        ``listen_count`` (int), ``peak_hour`` (int | None).
+        ``top_artists`` (DataFrame), ``top_albums`` (DataFrame),
+        ``checkin_count`` (int), ``listen_count`` (int), ``peak_hour`` (int | None).
     """
     if swarm_df.empty or lastfm_df.empty:
         return {}
@@ -302,6 +362,11 @@ def get_dining_soundtrack_data(
             continue
         combined = pd.concat(frames, ignore_index=True).drop_duplicates()
         top_artists = get_top_entities(combined, "artist", limit=top_n)
+        top_albums = (
+            get_top_entities(combined, "album", limit=top_n)
+            if "album" in combined.columns
+            else pd.DataFrame()
+        )
         peak_hour: int | None = None
         if "date_text" in combined.columns and not combined["date_text"].isna().all():
             hour_counts = combined["date_text"].dt.hour.value_counts()
@@ -309,6 +374,7 @@ def get_dining_soundtrack_data(
                 peak_hour = int(hour_counts.idxmax())
         results[cat] = {
             "top_artists": top_artists,
+            "top_albums": top_albums,
             "checkin_count": bucket_checkins[cat],
             "listen_count": len(combined),
             "peak_hour": peak_hour,
@@ -354,6 +420,47 @@ def get_top_late_night_artists(df: pd.DataFrame, limit: int = 10) -> pd.DataFram
     counts = late["artist"].value_counts().head(limit).reset_index()
     counts.columns = pd.Index(["artist", "plays"])
     return counts
+
+
+def get_late_night_by_hour(df: pd.DataFrame, top_n: int = 10) -> dict[int, dict[str, Any]]:
+    """Compute top artists and albums for each late-night hour (0–3).
+
+    Args:
+        df: Full listening history with ``date_text``, ``artist``, ``album``.
+        top_n: Maximum top artists/albums to return per hour.
+
+    Returns:
+        Dict keyed by hour integer (0, 1, 2, 3).  Each value has
+        ``play_count``, ``top_artists`` (DataFrame), ``top_albums`` (DataFrame).
+    """
+    late = _filter_late_night(df)
+    result: dict[int, dict[str, Any]] = {}
+    for hour in range(_LATE_NIGHT_START, _LATE_NIGHT_END):
+        subset = late[late["date_text"].dt.hour == hour] if not late.empty else late
+        top_artists = (
+            subset["artist"]
+            .value_counts()
+            .head(top_n)
+            .reset_index()
+            .rename(columns={"artist": "Artist", "count": "Plays"})
+            if not subset.empty and "artist" in subset.columns
+            else pd.DataFrame()
+        )
+        top_albums = (
+            subset["album"]
+            .value_counts()
+            .head(top_n)
+            .reset_index()
+            .rename(columns={"album": "Album", "count": "Plays"})
+            if not subset.empty and "album" in subset.columns
+            else pd.DataFrame()
+        )
+        result[hour] = {
+            "play_count": len(subset),
+            "top_artists": top_artists,
+            "top_albums": top_albums,
+        }
+    return result
 
 
 def get_late_night_hourly(df: pd.DataFrame) -> pd.DataFrame:
@@ -500,6 +607,24 @@ def _signature_song(df: pd.DataFrame, windows: list[dict[str, Any]]) -> str | No
     return str(top.index[0]) if not top.empty else None
 
 
+def _top_n_table(combined: pd.DataFrame, col: str, n: int = 10) -> pd.DataFrame:
+    """Return a top-N plays table for *col* from *combined*.
+
+    Args:
+        combined: DataFrame with the column *col*.
+        col: Column name to count (``"artist"``, ``"album"``, or ``"track"``).
+        n: Number of top entries to return.
+
+    Returns:
+        DataFrame with columns ``[col, "Plays"]``; empty when *col* is absent.
+    """
+    if combined.empty or col not in combined.columns:
+        return pd.DataFrame(columns=[col, "Plays"])
+    counts = combined[col].value_counts().head(n).reset_index()
+    counts.columns = pd.Index([col, "Plays"])
+    return counts
+
+
 def _compute_holiday_stats(
     df: pd.DataFrame, holidays: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -513,7 +638,9 @@ def _compute_holiday_stats(
     Returns:
         List of dicts; one per holiday that has at least one year of data.
         Each dict has: ``name``, ``windows``, ``total_plays``, ``years_with_data``,
-        ``top_artist``, ``signature_song``, ``yoy_plays`` (DataFrame).
+        ``top_artist``, ``signature_song``, ``yoy_plays`` (DataFrame),
+        ``top_artists`` (DataFrame), ``top_albums`` (DataFrame),
+        ``top_songs`` (DataFrame).
     """
     results = []
     for holiday in holidays:
@@ -544,6 +671,9 @@ def _compute_holiday_stats(
                 "top_artist": top_artist,
                 "signature_song": _signature_song(df, windows),
                 "yoy_plays": yoy,
+                "top_artists": _top_n_table(combined, "artist"),
+                "top_albums": _top_n_table(combined, "album"),
+                "top_songs": _top_n_table(combined, "track"),
             }
         )
     return sorted(results, key=lambda h: h["total_plays"], reverse=True)
@@ -574,6 +704,7 @@ def _compute_lifestyle_data(
 
     # Week / weekend context
     week_stats = _compute_week_stats(df, home_city) if home_city else []
+    week_by_day = _compute_week_by_day(df)
 
     # Transit
     transit_days: set[str] = get_transit_days(swarm_df)
@@ -595,6 +726,7 @@ def _compute_lifestyle_data(
     late_rate = len(late_df) / len(df) if len(df) > 0 else 0.0
     top_late_night = get_top_late_night_artists(df, limit=10)
     late_hourly = get_late_night_hourly(df)
+    late_by_hour = get_late_night_by_hour(df)
     latest_session = find_latest_session(df)
 
     # Holiday
@@ -620,6 +752,7 @@ def _compute_lifestyle_data(
 
     return {
         "week": week_stats,
+        "week_by_day": week_by_day,
         "transit": {
             "days": len(transit_days),
             "transit_df": transit_df,
@@ -633,6 +766,7 @@ def _compute_lifestyle_data(
             "late_rate": late_rate,
             "top_artists": top_late_night,
             "hourly": late_hourly,
+            "by_hour": late_by_hour,
             "latest_session": latest_session,
         },
         "holiday": holiday_stats,
@@ -711,94 +845,93 @@ def _render_persona_banner(data: dict[str, Any]) -> None:
     st.divider()
 
 
-def _render_your_week(week_stats: list[dict[str, Any]]) -> None:
+def _render_your_week(
+    week_stats: list[dict[str, Any]], week_by_day: dict[str, dict[str, Any]]
+) -> None:
     """Render the Your Week section.
 
     Args:
-        week_stats: Output of ``_compute_week_stats``.
+        week_stats: Output of ``_compute_week_stats`` (4-context summary).
+        week_by_day: Output of ``_compute_week_by_day`` (per-day top-10 tables).
     """
-    if not week_stats:
-        st.info(
-            "No home city configured in your assumptions file. "
-            "Add ``defaults.city`` to enable weekly context analysis."
-        )
+    if not week_stats and not week_by_day:
+        st.info("No music data available for weekly breakdown.")
         return
 
-    total = sum(s["play_count"] for s in week_stats)
-    home_wknd = next((s for s in week_stats if s["is_weekend"] and s["is_home"]), None)
-    home_wkdy = next((s for s in week_stats if not s["is_weekend"] and s["is_home"]), None)
+    if week_stats:
+        total = sum(s["play_count"] for s in week_stats)
+        home_wknd = next((s for s in week_stats if s["is_weekend"] and s["is_home"]), None)
+        home_wkdy = next((s for s in week_stats if not s["is_weekend"] and s["is_home"]), None)
 
-    # Summary metrics (always visible)
-    cols = st.columns(4)
-    for i, stat in enumerate(week_stats):
-        with cols[i]:
-            pct = stat["play_count"] / total * 100 if total > 0 else 0
-            st.markdown(
-                f"<span style='color:{stat['color']}; font-weight:700;'>{stat['label']}</span>",
-                unsafe_allow_html=True,
-            )
-            st.metric("Plays", f"{stat['play_count']:,}", delta=f"{pct:.0f}% of total")
-            if stat["top_artists"]:
-                st.caption(" · ".join(stat["top_artists"][:2]))
-
-    with st.expander("Full breakdown", expanded=False):
-        if home_wknd and home_wkdy and home_wkdy["play_count"] > 0:
-            boost = (
-                (home_wknd["play_count"] - home_wkdy["play_count"]) / home_wkdy["play_count"] * 100
-            )
-            st.caption(
-                f"Weekend listening is **{abs(boost):.0f}%** "
-                f"{'higher' if boost >= 0 else 'lower'} than weekdays at home."
-            )
-
-        # Day-of-week bar chart using all contexts
-        all_subsets = [s["subset"] for s in week_stats if not s["subset"].empty]
-        if all_subsets:
-            combined = pd.concat(all_subsets, ignore_index=True)
-            day_order = [
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-            ]
-            day_counts = (
-                combined.assign(day=combined["date_text"].dt.day_name())
-                .groupby("day")
-                .size()
-                .reindex(day_order, fill_value=0)
-                .reset_index(name="plays")
-            )
-            day_counts.columns = pd.Index(["day", "plays"])
-            fig = px.bar(
-                day_counts,
-                x="day",
-                y="plays",
-                color_discrete_sequence=[ACCENT_INDIGO],
-                labels={"day": "Day", "plays": "Plays"},
-            )
-            fig = apply_dark_theme(fig)
-            fig.update_layout(height=260, showlegend=False)
-            st.plotly_chart(fig, width="stretch", key="lifestyle_week_bar")
-
-        # Top artists per context
-        ctx_cols = st.columns(4)
+        cols = st.columns(4)
         for i, stat in enumerate(week_stats):
-            with ctx_cols[i]:
+            with cols[i]:
+                pct = stat["play_count"] / total * 100 if total > 0 else 0
                 st.markdown(
-                    f"<span style='color:{stat['color']}; font-size:0.8rem; font-weight:600;'>"
-                    f"{stat['label']}</span>",
+                    f"<span style='color:{stat['color']}; font-weight:700;'>{stat['label']}</span>",
                     unsafe_allow_html=True,
                 )
-                if stat["peak_hour"] is not None:
-                    st.caption(f"Peak hour: {stat['peak_hour']:02d}:00")
-                for artist in stat["top_artists"]:
-                    st.markdown(
-                        f"<span style='font-size:0.85rem; color:{TEXT_DIM};'>· {artist}</span>",
-                        unsafe_allow_html=True,
-                    )
+                st.metric("Plays", f"{stat['play_count']:,}", delta=f"{pct:.0f}% of total")
+                if stat["top_artists"]:
+                    st.caption(" · ".join(stat["top_artists"][:2]))
+
+    with st.expander("Top 10 artists & albums by day", expanded=False):
+        if week_stats:
+            home_wknd = next((s for s in week_stats if s["is_weekend"] and s["is_home"]), None)
+            home_wkdy = next((s for s in week_stats if not s["is_weekend"] and s["is_home"]), None)
+            if home_wknd and home_wkdy and home_wkdy["play_count"] > 0:
+                boost = (
+                    (home_wknd["play_count"] - home_wkdy["play_count"])
+                    / home_wkdy["play_count"]
+                    * 100
+                )
+                st.caption(
+                    f"Weekend listening is **{abs(boost):.0f}%** "
+                    f"{'higher' if boost >= 0 else 'lower'} than weekdays at home."
+                )
+
+        if week_by_day:
+            # Day-of-week play count bar
+            day_rows = [{"Day": day, "Plays": week_by_day[day]["play_count"]} for day in _DAY_ORDER]
+            day_df = pd.DataFrame(day_rows)
+            fig = px.bar(
+                day_df,
+                x="Day",
+                y="Plays",
+                color_discrete_sequence=[ACCENT_INDIGO],
+            )
+            fig = apply_dark_theme(fig)
+            fig.update_layout(height=240, showlegend=False)
+            st.plotly_chart(fig, width="stretch", key="lifestyle_week_bar")
+
+            # Per-day tabs with top 10 artists and albums
+            tab_labels = [f"{day[:3]} ({week_by_day[day]['play_count']:,})" for day in _DAY_ORDER]
+            tabs = st.tabs(tab_labels)
+            for tab, day in zip(tabs, _DAY_ORDER):
+                with tab:
+                    day_data = week_by_day[day]
+                    if day_data["play_count"] == 0:
+                        st.caption("No plays recorded on this day.")
+                        continue
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_INDIGO}; font-weight:600;'>"
+                            f"Top Artists</span>",
+                            unsafe_allow_html=True,
+                        )
+                        artists_df = day_data["top_artists"]
+                        if not artists_df.empty:
+                            st.dataframe(artists_df, hide_index=True, width="stretch")
+                    with col_b:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_CYAN}; font-weight:600;'>"
+                            f"Top Albums</span>",
+                            unsafe_allow_html=True,
+                        )
+                        albums_df = day_data["top_albums"]
+                        if not albums_df.empty:
+                            st.dataframe(albums_df, hide_index=True, width="stretch")
 
 
 def _render_on_the_move(transit_data: dict[str, Any]) -> None:
@@ -935,7 +1068,7 @@ def _render_after_dark(late_data: dict[str, Any]) -> None:
         else:
             st.metric("Longest Late Session", "—")
 
-    with st.expander("Hourly listening clock & top artists", expanded=False):
+    with st.expander("Hour-by-hour breakdown & top artists", expanded=False):
         if not hourly.empty:
             hourly_copy = hourly.copy()
             hourly_copy["color"] = hourly_copy["is_late_night"].map(
@@ -951,28 +1084,43 @@ def _render_after_dark(late_data: dict[str, Any]) -> None:
             )
             fig = apply_dark_theme(fig)
             fig.update_layout(
-                height=280,
-                xaxis={"tickmode": "linear", "dtick": 3, "tickformat": "%02d:00"},
+                height=260,
+                xaxis={"tickmode": "linear", "dtick": 3},
                 showlegend=False,
             )
             st.plotly_chart(fig, width="stretch", key="lifestyle_late_hourly")
 
-        if not top_artists.empty:
-            st.markdown(
-                "<span style='color:" + TEXT_DIM + "; font-size:0.85rem;'>"
-                "Top artists (midnight–4 AM)</span>",
-                unsafe_allow_html=True,
-            )
-            artist_cols = st.columns(min(len(top_artists), 5))
-            for i, (col, (_, row)) in enumerate(zip(artist_cols, top_artists.head(5).iterrows())):
-                color = ACCENT_INDIGO if i == 0 else TEXT_DIM
-                col.markdown(
-                    f"<div style='text-align:center;'>"
-                    f"<span style='color:{color}; font-weight:700; font-size:0.85rem;'>"
-                    f"#{i + 1}</span>"
-                    f"<br><span style='font-size:0.8rem;'>{row['artist']}</span></div>",
-                    unsafe_allow_html=True,
-                )
+        # Per-hour tabs (midnight, 1 AM, 2 AM, 3 AM) with top 10 artists and albums
+        by_hour = late_data.get("by_hour", {})
+        if by_hour:
+            hour_labels = [
+                f"{'Midnight' if h == 0 else f'{h} AM'} ({by_hour[h]['play_count']:,})"
+                for h in range(_LATE_NIGHT_START, _LATE_NIGHT_END)
+            ]
+            hour_tabs = st.tabs(hour_labels)
+            for tab, hour in zip(hour_tabs, range(_LATE_NIGHT_START, _LATE_NIGHT_END)):
+                with tab:
+                    hd = by_hour[hour]
+                    if hd["play_count"] == 0:
+                        st.caption("No plays in this hour.")
+                        continue
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_INDIGO}; font-weight:600;'>"
+                            f"Top Artists</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if not hd["top_artists"].empty:
+                            st.dataframe(hd["top_artists"], hide_index=True, width="stretch")
+                    with col_b:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_CYAN}; font-weight:600;'>"
+                            f"Top Albums</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if not hd["top_albums"].empty:
+                            st.dataframe(hd["top_albums"], hide_index=True, width="stretch")
 
 
 def _render_years_traditions(holiday_stats: list[dict[str, Any]]) -> None:
@@ -1000,13 +1148,15 @@ def _render_years_traditions(holiday_stats: list[dict[str, Any]]) -> None:
         sig = top_holiday.get("signature_song") or "—"
         st.metric("Signature Song", sig[:40] + ("…" if len(sig) > 40 else ""))
 
-    with st.expander("Year-over-year plays per holiday", expanded=False):
-        st.caption(f"Total holiday listens across {total_plays:,} plays.")
+    with st.expander("Year-over-year plays & full breakdowns", expanded=False):
+        st.caption(
+            f"Total holiday listens: {total_plays:,} plays across {len(holiday_stats)} holidays."
+        )
+
         # YoY line chart for top 4 holidays
-        top_holidays = holiday_stats[:4]
-        if top_holidays:
+        if holiday_stats:
             frames = []
-            for h in top_holidays:
+            for h in holiday_stats[:4]:
                 yoy = h["yoy_plays"].copy()
                 yoy["holiday"] = h["name"]
                 frames.append(yoy)
@@ -1021,23 +1171,55 @@ def _render_years_traditions(holiday_stats: list[dict[str, Any]]) -> None:
                 labels={"year": "Year", "plays": "Plays", "holiday": "Holiday"},
             )
             fig = apply_dark_theme(fig)
-            fig.update_layout(height=300)
+            fig.update_layout(height=280)
             st.plotly_chart(fig, width="stretch", key="lifestyle_holiday_yoy")
 
-        # Signature songs per holiday
-        sig_rows = [
-            {
-                "Holiday": h["name"],
-                "Signature Song": h.get("signature_song") or "—",
-                "Top Artist": h.get("top_artist") or "—",
-            }
-            for h in holiday_stats
-        ]
-        st.dataframe(
-            pd.DataFrame(sig_rows),
-            hide_index=True,
-            width="stretch",
-        )
+        # Per-holiday tabs: plays, top 10 artists, albums, songs
+        holiday_tab_labels = [f"{h['name']} ({h['total_plays']:,})" for h in holiday_stats]
+        if holiday_tab_labels:
+            holiday_tabs = st.tabs(holiday_tab_labels)
+            accent_cycle = [
+                ACCENT_INDIGO,
+                ACCENT_CYAN,
+                ACCENT_ORANGE,
+                ACCENT_GREEN,
+                ACCENT_PINK,
+                ACCENT_YELLOW,
+                ACCENT_PURPLE,
+            ]
+            for tab, h in zip(holiday_tabs, holiday_stats):
+                with tab:
+                    accent = accent_cycle[holiday_stats.index(h) % len(accent_cycle)]
+                    sig = h.get("signature_song") or "—"
+                    meta_cols = st.columns(3)
+                    meta_cols[0].metric("Total Plays", f"{h['total_plays']:,}")
+                    meta_cols[1].metric("Years with Data", h["years_with_data"])
+                    meta_cols[2].metric("Signature Song", sig[:35] + ("…" if len(sig) > 35 else ""))
+
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.markdown(
+                            f"<span style='color:{accent}; font-weight:600;'>Top Artists</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if not h["top_artists"].empty:
+                            st.dataframe(h["top_artists"], hide_index=True, width="stretch")
+                    with col_b:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_CYAN}; "
+                            f"font-weight:600;'>Top Albums</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if not h["top_albums"].empty:
+                            st.dataframe(h["top_albums"], hide_index=True, width="stretch")
+                    with col_c:
+                        st.markdown(
+                            f"<span style='color:{ACCENT_GREEN}; "
+                            f"font-weight:600;'>Top Songs</span>",
+                            unsafe_allow_html=True,
+                        )
+                        if not h["top_songs"].empty:
+                            st.dataframe(h["top_songs"], hide_index=True, width="stretch")
 
 
 # ---------------------------------------------------------------------------
@@ -1093,7 +1275,7 @@ def render_listening_lifestyle() -> None:
     _render_persona_banner(data)
 
     st.subheader(":material/calendar_view_week: Your Week")
-    _render_your_week(data["week"])
+    _render_your_week(data["week"], data["week_by_day"])
 
     st.subheader(":material/train: On the Move")
     _render_on_the_move(data["transit"])

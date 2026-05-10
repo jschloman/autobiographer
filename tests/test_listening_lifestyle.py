@@ -14,14 +14,17 @@ from pages.listening_lifestyle import (
     _build_holiday_windows,
     _classify_venue_category,
     _compute_holiday_stats,
+    _compute_week_by_day,
     _compute_week_stats,
     _filter_holiday,
     _filter_late_night,
     _listens_around_checkin,
     _signature_song,
     _synthesize_persona,
+    _top_n_table,
     find_latest_session,
     get_dining_soundtrack_data,
+    get_late_night_by_hour,
     get_late_night_hourly,
     get_top_late_night_artists,
     render_listening_lifestyle,
@@ -266,17 +269,17 @@ class TestListensAroundCheckin(unittest.TestCase):
         base_ts = 1700000000
         df = pd.DataFrame(
             {
-                "timestamp": [base_ts - 3600, base_ts, base_ts + 3600],
+                "timestamp": [base_ts - 1800, base_ts, base_ts + 1800],
                 "artist": ["A", "B", "C"],
             }
         )
-        result = _listens_around_checkin(df, base_ts, window_hours=2)
+        result = _listens_around_checkin(df, base_ts, window_minutes=30)
         self.assertEqual(len(result), 3)
 
     def test_excludes_listens_outside_window(self) -> None:
         base_ts = 1700000000
         df = pd.DataFrame({"timestamp": [base_ts - 10000, base_ts + 10000], "artist": ["X", "Y"]})
-        result = _listens_around_checkin(df, base_ts, window_hours=1)
+        result = _listens_around_checkin(df, base_ts, window_minutes=30)
         self.assertTrue(result.empty)
 
     def test_empty_df_returns_empty(self) -> None:
@@ -304,6 +307,27 @@ class TestGetDiningSoundtrackData(unittest.TestCase):
 
     def test_empty_inputs_return_empty_dict(self) -> None:
         self.assertEqual(get_dining_soundtrack_data(pd.DataFrame(), pd.DataFrame()), {})
+
+    def test_checkin_with_no_nearby_listens_excluded(self) -> None:
+        base_ts = 1700000000
+        swarm = pd.DataFrame({"venue_category": ["Italian Restaurant"], "timestamp": [base_ts]})
+        # Listens are far outside the 30-min window
+        listens = pd.DataFrame(
+            {
+                "timestamp": [base_ts - 7200, base_ts + 7200],
+                "artist": ["A", "B"],
+                "date_text": pd.to_datetime(["2023-11-14 08:00", "2023-11-14 14:00"]),
+            }
+        )
+        result = get_dining_soundtrack_data(swarm, listens)
+        # No listens within window, so bucket has checkins but no frames → excluded
+        self.assertNotIn("Restaurants", result)
+
+    def test_missing_required_columns_returns_empty(self) -> None:
+        bad_swarm = pd.DataFrame({"venue": ["Italian Restaurant"]})  # no timestamp col
+        listens = _make_listens_df()
+        result = get_dining_soundtrack_data(bad_swarm, listens)
+        self.assertEqual(result, {})
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +444,18 @@ class TestBuildHolidayWindows(unittest.TestCase):
     def test_empty_df_returns_empty_list(self) -> None:
         self.assertEqual(_build_holiday_windows(pd.DataFrame(), _XMAS_DEF), [])
 
+    def test_invalid_day_range_skipped(self) -> None:
+        # day_range with day 31 in a month that has no 31st → ValueError skipped
+        df = _make_holiday_df()
+        # February has no day 29 in a non-leap year → should skip that year gracefully
+        feb_def = {"name": "Feb", "month": 2, "day_range": [29, 29]}
+        # Use a df where the only year is a non-leap year
+        df2 = df.copy()
+        df2["date_text"] = pd.to_datetime(["2023-02-14"] * len(df2))
+        windows = _build_holiday_windows(df2, feb_def)
+        # 2023 is not a leap year so Feb 29 doesn't exist → window skipped
+        self.assertEqual(windows, [])
+
 
 class TestFilterHoliday(unittest.TestCase):
     """Tests for _filter_holiday."""
@@ -445,6 +481,14 @@ class TestSignatureSong(unittest.TestCase):
     def test_empty_windows_returns_none(self) -> None:
         self.assertIsNone(_signature_song(_make_holiday_df(), []))
 
+    def test_no_tracks_in_windows_returns_none(self) -> None:
+        df = _make_holiday_df()
+        windows = _build_holiday_windows(df, _XMAS_DEF)
+        # Pass a df without track column → combined has no "track" column
+        df_no_track = df.drop(columns=["track"])
+        result = _signature_song(df_no_track, windows)
+        self.assertIsNone(result)
+
 
 class TestComputeHolidayStats(unittest.TestCase):
     """Tests for _compute_holiday_stats."""
@@ -461,6 +505,13 @@ class TestComputeHolidayStats(unittest.TestCase):
         stats = _compute_holiday_stats(df, [_XMAS_DEF, _HALLOWEEN_DEF])
         plays = [h["total_plays"] for h in stats]
         self.assertEqual(plays, sorted(plays, reverse=True))
+
+    def test_holiday_with_no_matching_data_skipped(self) -> None:
+        # A holiday in March with no listens → windows exist but zero plays → skipped.
+        df = _make_holiday_df()  # only Dec, Oct, Jun data
+        march_def = {"name": "St Patricks", "month": 3, "day_range": [17, 17]}
+        stats = _compute_holiday_stats(df, [march_def])
+        self.assertEqual(stats, [])
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +550,169 @@ class TestSynthesizePersona(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _compute_week_by_day
+# ---------------------------------------------------------------------------
+
+
+class TestComputeWeekByDay(unittest.TestCase):
+    """Tests for _compute_week_by_day."""
+
+    def test_returns_all_seven_days(self) -> None:
+        df = _make_listens_df(days=["2024-01-01"])  # Monday
+        result = _compute_week_by_day(df)
+        self.assertEqual(
+            set(result.keys()),
+            {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"},
+        )
+
+    def test_counts_plays_per_day(self) -> None:
+        df = _make_listens_df(
+            days=["2024-01-01", "2024-01-01", "2024-01-02"],
+            hours=[10, 11, 10],
+        )
+        result = _compute_week_by_day(df)
+        self.assertEqual(result["Monday"]["play_count"], 2)
+        self.assertEqual(result["Tuesday"]["play_count"], 1)
+
+    def test_top_artists_dataframe_present(self) -> None:
+        df = _make_listens_df(
+            days=["2024-01-01", "2024-01-01"],
+            artists=["Bowie", "Bowie"],
+        )
+        df["album"] = "Space Oddity"
+        result = _compute_week_by_day(df)
+        artists_df = result["Monday"]["top_artists"]
+        self.assertFalse(artists_df.empty)
+        self.assertIn("Artist", artists_df.columns)
+
+    def test_empty_day_returns_zero_count(self) -> None:
+        df = _make_listens_df(days=["2024-01-01"])  # Monday only
+        result = _compute_week_by_day(df)
+        self.assertEqual(result["Sunday"]["play_count"], 0)
+
+    def test_empty_df_all_zero(self) -> None:
+        result = _compute_week_by_day(pd.DataFrame(columns=["date_text", "artist", "album"]))
+        for day_data in result.values():
+            self.assertEqual(day_data["play_count"], 0)
+
+
+# ---------------------------------------------------------------------------
+# get_late_night_by_hour
+# ---------------------------------------------------------------------------
+
+
+class TestGetLateNightByHour(unittest.TestCase):
+    """Tests for get_late_night_by_hour."""
+
+    def test_returns_four_hour_keys(self) -> None:
+        df = _make_listens_df(hours=[1])
+        df["album"] = "Album A"
+        result = get_late_night_by_hour(df)
+        self.assertEqual(set(result.keys()), {0, 1, 2, 3})
+
+    def test_counts_plays_per_hour(self) -> None:
+        df = _make_listens_df(hours=[1, 1, 2], days=["2024-01-01"] * 3)
+        df["album"] = "Album A"
+        result = get_late_night_by_hour(df)
+        self.assertEqual(result[1]["play_count"], 2)
+        self.assertEqual(result[2]["play_count"], 1)
+        self.assertEqual(result[0]["play_count"], 0)
+
+    def test_top_artists_present_for_active_hour(self) -> None:
+        df = _make_listens_df(hours=[2], artists=["Nina Simone"])
+        df["album"] = "Nina"
+        result = get_late_night_by_hour(df)
+        artists_df = result[2]["top_artists"]
+        self.assertFalse(artists_df.empty)
+        self.assertIn("Artist", artists_df.columns)
+
+    def test_empty_df_all_zero(self) -> None:
+        result = get_late_night_by_hour(pd.DataFrame(columns=["date_text", "artist", "album"]))
+        for h in range(4):
+            self.assertEqual(result[h]["play_count"], 0)
+
+
+# ---------------------------------------------------------------------------
+# _top_n_table
+# ---------------------------------------------------------------------------
+
+
+class TestTopNTable(unittest.TestCase):
+    """Tests for _top_n_table."""
+
+    def test_returns_top_n_rows(self) -> None:
+        df = pd.DataFrame({"artist": ["A"] * 5 + ["B"] * 3 + ["C"] * 1})
+        result = _top_n_table(df, "artist", n=2)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result.iloc[0]["artist"], "A")
+
+    def test_columns_are_col_and_plays(self) -> None:
+        df = pd.DataFrame({"album": ["X", "Y", "X"]})
+        result = _top_n_table(df, "album")
+        self.assertListEqual(list(result.columns), ["album", "Plays"])
+
+    def test_empty_df_returns_empty_with_correct_columns(self) -> None:
+        result = _top_n_table(pd.DataFrame(), "artist")
+        self.assertTrue(result.empty)
+        self.assertListEqual(list(result.columns), ["artist", "Plays"])
+
+    def test_missing_col_returns_empty(self) -> None:
+        df = pd.DataFrame({"other": [1, 2, 3]})
+        result = _top_n_table(df, "artist")
+        self.assertTrue(result.empty)
+
+
+# ---------------------------------------------------------------------------
+# Updated _compute_holiday_stats (top_artists / top_albums / top_songs)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeHolidayStatsExtended(unittest.TestCase):
+    """Tests for the top-N tables added to _compute_holiday_stats."""
+
+    def _make_df_with_albums(self) -> pd.DataFrame:
+        df = _make_listens_df(
+            days=["2023-12-24", "2023-12-25", "2023-12-26"],
+            artists=["Mariah", "Mariah", "Wham!"],
+            hours=[10, 11, 12],
+        )
+        df["album"] = ["Merry Christmas", "Merry Christmas", "Last Christmas"]
+        return df
+
+    def test_top_artists_key_present(self) -> None:
+        df = self._make_df_with_albums()
+        holiday = {"name": "Christmas", "month": 12, "day_range": [24, 26]}
+        results = _compute_holiday_stats(df, [holiday])
+        self.assertIn("top_artists", results[0])
+
+    def test_top_artists_is_dataframe(self) -> None:
+        df = self._make_df_with_albums()
+        holiday = {"name": "Christmas", "month": 12, "day_range": [24, 26]}
+        results = _compute_holiday_stats(df, [holiday])
+        self.assertIsInstance(results[0]["top_artists"], pd.DataFrame)
+
+    def test_top_songs_key_present(self) -> None:
+        df = self._make_df_with_albums()
+        holiday = {"name": "Christmas", "month": 12, "day_range": [24, 26]}
+        results = _compute_holiday_stats(df, [holiday])
+        self.assertIn("top_songs", results[0])
+
+    def test_top_albums_key_present(self) -> None:
+        df = self._make_df_with_albums()
+        holiday = {"name": "Christmas", "month": 12, "day_range": [24, 26]}
+        results = _compute_holiday_stats(df, [holiday])
+        self.assertIn("top_albums", results[0])
+
+    def test_mariah_is_top_artist(self) -> None:
+        df = self._make_df_with_albums()
+        holiday = {"name": "Christmas", "month": 12, "day_range": [24, 26]}
+        results = _compute_holiday_stats(df, [holiday])
+        top = results[0]["top_artists"]
+        self.assertFalse(top.empty)
+        self.assertEqual(top.iloc[0]["artist"], "Mariah")
+
+
+# ---------------------------------------------------------------------------
 # Smoke test for the render function
 # ---------------------------------------------------------------------------
 
@@ -532,8 +746,34 @@ class TestRenderListeningLifestyle(unittest.TestCase):
             days=["2024-01-01", "2024-01-01", "2024-01-06", "2024-01-08"],
         )
         # Pre-built data so the render skips recomputation
+        _empty_top10 = pd.DataFrame(columns=["artist", "Plays"])
+        _by_hour = {
+            h: {
+                "play_count": 0,
+                "top_artists": _empty_top10.copy(),
+                "top_albums": pd.DataFrame(columns=["album", "Plays"]),
+            }
+            for h in range(4)
+        }
+        _week_by_day = {
+            day: {
+                "play_count": 0,
+                "top_artists": _empty_top10.copy(),
+                "top_albums": pd.DataFrame(columns=["album", "Plays"]),
+            }
+            for day in [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ]
+        }
         fake_data: dict = {
             "week": [],
+            "week_by_day": _week_by_day,
             "transit": {
                 "days": 0,
                 "transit_df": pd.DataFrame(),
@@ -545,8 +785,9 @@ class TestRenderListeningLifestyle(unittest.TestCase):
             "dining": {},
             "late_night": {
                 "late_rate": 0.05,
-                "top_artists": pd.DataFrame(columns=["artist", "plays"]),
+                "top_artists": _empty_top10.copy(),
                 "hourly": pd.DataFrame(),
+                "by_hour": _by_hour,
                 "latest_session": None,
             },
             "holiday": [],
