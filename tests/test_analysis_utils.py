@@ -187,5 +187,93 @@ class TestAnalysisUtils(unittest.TestCase):
         self.assertTrue(result.empty)
 
 
+class TestSwarmAnalysisCaches(unittest.TestCase):
+    """Tests for transit-days, dining, and detected-trips cache persistence."""
+
+    def test_transit_days_roundtrip(self) -> None:
+        import tempfile
+
+        from analysis_utils import load_transit_days_cache, save_transit_days_cache
+
+        days = {"2024-01-01", "2024-06-15", "2024-12-25"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "transit.json")
+            save_transit_days_cache(days, path)
+            loaded = load_transit_days_cache(path)
+        self.assertEqual(loaded, days)
+
+    def test_transit_days_missing_file_returns_empty_set(self) -> None:
+        from analysis_utils import load_transit_days_cache
+
+        result = load_transit_days_cache("/nonexistent/path.json")
+        self.assertEqual(result, set())
+
+    def test_transit_days_invalid_json_returns_empty_set(self) -> None:
+        import tempfile
+
+        from analysis_utils import load_transit_days_cache
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+            fh.write("not json[{")
+            path = fh.name
+        result = load_transit_days_cache(path)
+        os.unlink(path)
+        self.assertEqual(result, set())
+
+    def test_dining_cache_roundtrip(self) -> None:
+        import tempfile
+
+        from analysis_utils import load_dining_cache, save_dining_cache
+
+        artists_df = pd.DataFrame({"artist": ["Artist A", "Artist B"], "Plays": [10, 5]})
+        albums_df = pd.DataFrame({"album": ["Album X"], "Plays": [3]})
+        data = {
+            "Restaurants": {
+                "top_artists": artists_df,
+                "top_albums": albums_df,
+                "checkin_count": 4,
+                "listen_count": 15,
+                "peak_hour": 19,
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "dining.json")
+            save_dining_cache(data, path)
+            loaded = load_dining_cache(path)
+
+        self.assertIn("Restaurants", loaded)
+        self.assertEqual(loaded["Restaurants"]["checkin_count"], 4)
+        self.assertEqual(loaded["Restaurants"]["listen_count"], 15)
+        self.assertEqual(loaded["Restaurants"]["peak_hour"], 19)
+        self.assertEqual(
+            list(loaded["Restaurants"]["top_artists"]["artist"]), ["Artist A", "Artist B"]
+        )
+
+    def test_dining_cache_missing_file_returns_empty(self) -> None:
+        from analysis_utils import load_dining_cache
+
+        self.assertEqual(load_dining_cache("/nonexistent/path.json"), {})
+
+    def test_dining_cache_peak_hour_none_roundtrips(self) -> None:
+        import tempfile
+
+        from analysis_utils import load_dining_cache, save_dining_cache
+
+        data = {
+            "Cafes": {
+                "top_artists": pd.DataFrame(),
+                "top_albums": pd.DataFrame(),
+                "checkin_count": 1,
+                "listen_count": 0,
+                "peak_hour": None,
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "dining.json")
+            save_dining_cache(data, path)
+            loaded = load_dining_cache(path)
+        self.assertIsNone(loaded["Cafes"]["peak_hour"])
+
+
 if __name__ == "__main__":
     unittest.main()
