@@ -92,7 +92,7 @@ def _load_data_with_progress(
     """
     assumptions = load_assumptions(assumptions_path)
 
-    st.markdown("<div style='margin-top:15vh;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:20vh;'></div>", unsafe_allow_html=True)
     _, center_col, _ = st.columns([1, 2, 1])
     with center_col:
         with st.status("Loading your data…", expanded=True) as status:
