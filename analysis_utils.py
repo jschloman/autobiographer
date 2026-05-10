@@ -122,7 +122,17 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
     all_checkins = []
     if not swarm_dir or not os.path.exists(swarm_dir):
         return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
+            columns=[
+                "timestamp",
+                "offset",
+                "city",
+                "state",
+                "country",
+                "venue",
+                "venue_category",
+                "lat",
+                "lng",
+            ]
         )
 
     json_files = glob.glob(os.path.join(swarm_dir, "checkins*.json"))
@@ -167,6 +177,9 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                     lat = item.get("lat") or location.get("lat")
                     lng = item.get("lng") or location.get("lng")
 
+                    categories = venue.get("categories", [])
+                    venue_category = categories[0].get("name", "") if categories else ""
+
                     all_checkins.append(
                         {
                             "timestamp": ts,
@@ -175,6 +188,7 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
                             "state": state,
                             "country": country,
                             "venue": venue.get("name", "Unknown"),
+                            "venue_category": venue_category,
                             "lat": lat,
                             "lng": lng,
                             "_needs_geocode": needs_geocode and lat is not None and lng is not None,
@@ -185,7 +199,17 @@ def load_swarm_data(swarm_dir: str) -> pd.DataFrame:
 
     if not all_checkins:
         return pd.DataFrame(
-            columns=["timestamp", "offset", "city", "state", "country", "venue", "lat", "lng"]
+            columns=[
+                "timestamp",
+                "offset",
+                "city",
+                "state",
+                "country",
+                "venue",
+                "venue_category",
+                "lat",
+                "lng",
+            ]
         )
 
     df = pd.DataFrame(all_checkins)
@@ -1304,3 +1328,303 @@ def get_avg_plays_per_day(df: pd.DataFrame) -> float:
         return 0.0
     unique_days = int(df["date_text"].dt.date.nunique())
     return float(len(df)) / unique_days if unique_days > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Dining soundtrack analysis
+# ---------------------------------------------------------------------------
+
+_DINING_WINDOW_MINUTES: int = 30
+
+#: Venue category buckets shown in the UI.
+FOOD_DRINK_CATEGORIES: list[str] = [
+    "Restaurants",
+    "Bars & Nightlife",
+    "Cafes",
+    "Fast Food",
+]
+
+_CATEGORY_RULES: list[tuple[str, str]] = [
+    ("fast food", "Fast Food"),
+    ("burger", "Fast Food"),
+    ("pizza", "Fast Food"),
+    ("fried chicken", "Fast Food"),
+    ("hot dog", "Fast Food"),
+    ("sandwich", "Fast Food"),
+    ("bar", "Bars & Nightlife"),
+    ("nightclub", "Bars & Nightlife"),
+    ("pub", "Bars & Nightlife"),
+    ("brewery", "Bars & Nightlife"),
+    ("wine", "Bars & Nightlife"),
+    ("cocktail", "Bars & Nightlife"),
+    ("lounge", "Bars & Nightlife"),
+    ("club", "Bars & Nightlife"),
+    ("cafe", "Cafes"),
+    ("café", "Cafes"),
+    ("coffee", "Cafes"),
+    ("tea room", "Cafes"),
+    ("bakery", "Cafes"),
+    ("dessert", "Cafes"),
+    ("ice cream", "Cafes"),
+    ("juice bar", "Cafes"),
+    ("restaurant", "Restaurants"),
+    ("diner", "Restaurants"),
+    ("food", "Restaurants"),
+    ("sushi", "Restaurants"),
+    ("ramen", "Restaurants"),
+    ("noodle", "Restaurants"),
+    ("steakhouse", "Restaurants"),
+    ("bbq", "Restaurants"),
+    ("seafood", "Restaurants"),
+    ("bistro", "Restaurants"),
+    ("brasserie", "Restaurants"),
+    ("tapas", "Restaurants"),
+    ("dim sum", "Restaurants"),
+    ("buffet", "Restaurants"),
+    ("grill", "Restaurants"),
+    ("kitchen", "Restaurants"),
+    ("eatery", "Restaurants"),
+]
+
+
+def _classify_venue_category(raw_category: str) -> Optional[str]:
+    """Map a raw Foursquare category to one of the four display buckets.
+
+    Args:
+        raw_category: Raw category string from a Foursquare export.
+
+    Returns:
+        One of the four :data:`FOOD_DRINK_CATEGORIES` strings, or ``None``.
+    """
+    lower = raw_category.lower()
+    for substring, bucket in _CATEGORY_RULES:
+        if substring in lower:
+            return bucket
+    return None
+
+
+def _listens_around_checkin(
+    lastfm_df: pd.DataFrame,
+    checkin_ts: int,
+    window_minutes: int = _DINING_WINDOW_MINUTES,
+) -> pd.DataFrame:
+    """Return Last.fm listens within ±``window_minutes`` of *checkin_ts*.
+
+    Args:
+        lastfm_df: Listening history with a ``timestamp`` column.
+        checkin_ts: Unix timestamp of the Swarm check-in.
+        window_minutes: Symmetric window size in minutes.
+
+    Returns:
+        Subset of ``lastfm_df`` within the window; may be empty.
+    """
+    if lastfm_df.empty or "timestamp" not in lastfm_df.columns:
+        return pd.DataFrame()
+    window_sec = window_minutes * 60
+    mask = (lastfm_df["timestamp"] >= checkin_ts - window_sec) & (
+        lastfm_df["timestamp"] <= checkin_ts + window_sec
+    )
+    return lastfm_df[mask]
+
+
+def get_dining_soundtrack_data(
+    swarm_df: pd.DataFrame,
+    lastfm_df: pd.DataFrame,
+    top_n: int = 10,
+) -> dict[str, dict[str, Any]]:
+    """Aggregate Last.fm listens around food/drink check-ins by venue bucket.
+
+    Uses a ±:data:`_DINING_WINDOW_MINUTES` window around each Swarm check-in.
+
+    Args:
+        swarm_df: Swarm DataFrame with ``timestamp`` and ``venue_category``.
+        lastfm_df: Listening history with ``timestamp``, ``artist``, ``album``,
+            ``date_text``.
+        top_n: Maximum top artists/albums to return per bucket.
+
+    Returns:
+        Dict keyed by venue category bucket.  Each value has:
+        ``top_artists`` (DataFrame), ``top_albums`` (DataFrame),
+        ``checkin_count`` (int), ``listen_count`` (int), ``peak_hour`` (int | None).
+    """
+    if swarm_df.empty or lastfm_df.empty:
+        return {}
+    required = {"timestamp", "venue_category"}
+    if not required.issubset(swarm_df.columns) or "timestamp" not in lastfm_df.columns:
+        return {}
+
+    bucket_listens: dict[str, list[pd.DataFrame]] = {c: [] for c in FOOD_DRINK_CATEGORIES}
+    bucket_checkins: dict[str, int] = {c: 0 for c in FOOD_DRINK_CATEGORIES}
+
+    for _, row in swarm_df.iterrows():
+        bucket = _classify_venue_category(str(row.get("venue_category", "")))
+        if bucket is None:
+            continue
+        nearby = _listens_around_checkin(lastfm_df, int(row["timestamp"]))
+        if not nearby.empty:
+            bucket_listens[bucket].append(nearby)
+        bucket_checkins[bucket] += 1
+
+    results: dict[str, dict[str, Any]] = {}
+    for cat in FOOD_DRINK_CATEGORIES:
+        if bucket_checkins[cat] == 0:
+            continue
+        frames = bucket_listens[cat]
+        if not frames:
+            continue
+        combined = pd.concat(frames, ignore_index=True).drop_duplicates()
+        top_artists = get_top_entities(combined, "artist", limit=top_n)
+        top_albums = (
+            get_top_entities(combined, "album", limit=top_n)
+            if "album" in combined.columns
+            else pd.DataFrame()
+        )
+        peak_hour: Optional[int] = None
+        if "date_text" in combined.columns and not combined["date_text"].isna().all():
+            hour_counts = combined["date_text"].dt.hour.value_counts()
+            if not hour_counts.empty:
+                peak_hour = int(hour_counts.idxmax())
+        results[cat] = {
+            "top_artists": top_artists,
+            "top_albums": top_albums,
+            "checkin_count": bucket_checkins[cat],
+            "listen_count": len(combined),
+            "peak_hour": peak_hour,
+        }
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Swarm analysis cache persistence
+# ---------------------------------------------------------------------------
+
+DETECTED_TRIPS_CACHE: str = os.path.join("data", "cache", "detected_trips.json")
+TRANSIT_DAYS_CACHE: str = os.path.join("data", "cache", "swarm_transit_days.json")
+DINING_CACHE: str = os.path.join("data", "cache", "swarm_dining.json")
+
+
+def load_detected_trips_cache(path: str = DETECTED_TRIPS_CACHE) -> list[dict[str, Any]]:
+    """Load previously detected trips from the JSON cache file.
+
+    Args:
+        path: Path to the cache file.
+
+    Returns:
+        List of trip dicts, or an empty list if the file does not exist.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data: list[dict[str, Any]] = json.load(fh)
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_detected_trips_cache(
+    trips: list[dict[str, Any]], path: str = DETECTED_TRIPS_CACHE
+) -> None:
+    """Persist detected trips to a JSON cache file.
+
+    Args:
+        trips: List of trip dicts from :func:`detect_trips_from_swarm`.
+        path: Destination file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(trips, fh, indent=2)
+
+
+def load_transit_days_cache(path: str = TRANSIT_DAYS_CACHE) -> set[str]:
+    """Load cached transit days from disk.
+
+    Args:
+        path: Path to the JSON cache file.
+
+    Returns:
+        Set of ISO date strings, or empty set if file is missing or invalid.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data: list[str] = json.load(fh)
+            return set(data)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+
+def save_transit_days_cache(days: set[str], path: str = TRANSIT_DAYS_CACHE) -> None:
+    """Persist transit days to a JSON cache file.
+
+    Args:
+        days: Set of ISO date strings from :func:`get_transit_days`.
+        path: Destination file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(sorted(days), fh)
+
+
+def _dining_to_json(data: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Serialise dining soundtrack data to a JSON-safe dict.
+
+    DataFrames are stored as lists of records.
+    """
+    out: dict[str, Any] = {}
+    for cat, stats in data.items():
+        out[cat] = {
+            "top_artists": stats["top_artists"].to_dict(orient="records")
+            if isinstance(stats["top_artists"], pd.DataFrame)
+            else [],
+            "top_albums": stats["top_albums"].to_dict(orient="records")
+            if isinstance(stats["top_albums"], pd.DataFrame)
+            else [],
+            "checkin_count": stats["checkin_count"],
+            "listen_count": stats["listen_count"],
+            "peak_hour": stats["peak_hour"],
+        }
+    return out
+
+
+def _dining_from_json(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Reconstruct dining soundtrack data from a JSON-loaded dict.
+
+    Converts record lists back to DataFrames.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for cat, stats in data.items():
+        out[cat] = {
+            "top_artists": pd.DataFrame(stats.get("top_artists", [])),
+            "top_albums": pd.DataFrame(stats.get("top_albums", [])),
+            "checkin_count": stats.get("checkin_count", 0),
+            "listen_count": stats.get("listen_count", 0),
+            "peak_hour": stats.get("peak_hour"),
+        }
+    return out
+
+
+def load_dining_cache(path: str = DINING_CACHE) -> dict[str, dict[str, Any]]:
+    """Load cached dining soundtrack data from disk.
+
+    Args:
+        path: Path to the JSON cache file.
+
+    Returns:
+        Dining dict with DataFrames reconstructed, or empty dict if missing.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw: dict[str, Any] = json.load(fh)
+            return _dining_from_json(raw)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dining_cache(data: dict[str, dict[str, Any]], path: str = DINING_CACHE) -> None:
+    """Persist dining soundtrack data to a JSON cache file.
+
+    Args:
+        data: Dining dict from :func:`get_dining_soundtrack_data`.
+        path: Destination file path.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(_dining_to_json(data), fh, indent=2)

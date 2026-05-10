@@ -7,23 +7,27 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from analysis_utils import get_avg_plays_per_day, get_transit_days, split_transit_listens
+from analysis_utils import (
+    _classify_venue_category,
+    _listens_around_checkin,
+    get_avg_plays_per_day,
+    get_dining_soundtrack_data,
+    get_transit_days,
+    split_transit_listens,
+)
 from pages.listening_lifestyle import (
     _add_location_context,
     _add_weekend_columns,
     _build_holiday_windows,
-    _classify_venue_category,
     _compute_holiday_stats,
     _compute_week_by_day,
     _compute_week_stats,
     _filter_holiday,
     _filter_late_night,
-    _listens_around_checkin,
     _signature_song,
     _synthesize_persona,
     _top_n_table,
     find_latest_session,
-    get_dining_soundtrack_data,
     get_late_night_by_hour,
     get_late_night_hourly,
     get_top_late_night_artists,
@@ -476,7 +480,7 @@ class TestSignatureSong(unittest.TestCase):
         windows = _build_holiday_windows(df, _XMAS_DEF)
         song = _signature_song(df, windows)
         self.assertIsNotNone(song)
-        self.assertIn("Mariah Carey", song)  # most played over 2 Christmases
+        self.assertIn("All I Want", song)  # most played track over 2 Christmases
 
     def test_empty_windows_returns_none(self) -> None:
         self.assertIsNone(_signature_song(_make_holiday_df(), []))

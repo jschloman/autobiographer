@@ -20,6 +20,7 @@ sections, scrolling) never re-trigger computation.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import pandas as pd
@@ -28,10 +29,15 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analysis_utils import (
+    DINING_CACHE,
+    TRANSIT_DAYS_CACHE,
     get_avg_plays_per_day,
+    get_dining_soundtrack_data,
     get_top_entities,
     get_transit_days,
     load_assumptions,
+    load_dining_cache,
+    load_transit_days_cache,
     split_transit_listens,
 )
 from components.theme import (
@@ -54,55 +60,11 @@ from components.theme import (
 _LATE_NIGHT_START = 0
 _LATE_NIGHT_END = 4  # hours 0, 1, 2, 3 (exclusive upper bound)
 _SESSION_GAP_MINUTES = 30
-_DINING_WINDOW_MINUTES = 30  # ±30 min around each food/drink check-in
 
-_FOOD_DRINK_CATEGORIES: list[str] = [
-    "Restaurants",
-    "Bars & Nightlife",
-    "Cafes",
-    "Fast Food",
-]
-
-_CATEGORY_RULES: list[tuple[str, str]] = [
-    ("fast food", "Fast Food"),
-    ("burger", "Fast Food"),
-    ("pizza", "Fast Food"),
-    ("fried chicken", "Fast Food"),
-    ("hot dog", "Fast Food"),
-    ("sandwich", "Fast Food"),
-    ("bar", "Bars & Nightlife"),
-    ("nightclub", "Bars & Nightlife"),
-    ("pub", "Bars & Nightlife"),
-    ("brewery", "Bars & Nightlife"),
-    ("wine", "Bars & Nightlife"),
-    ("cocktail", "Bars & Nightlife"),
-    ("lounge", "Bars & Nightlife"),
-    ("club", "Bars & Nightlife"),
-    ("cafe", "Cafes"),
-    ("café", "Cafes"),
-    ("coffee", "Cafes"),
-    ("tea room", "Cafes"),
-    ("bakery", "Cafes"),
-    ("dessert", "Cafes"),
-    ("ice cream", "Cafes"),
-    ("juice bar", "Cafes"),
-    ("restaurant", "Restaurants"),
-    ("diner", "Restaurants"),
-    ("food", "Restaurants"),
-    ("sushi", "Restaurants"),
-    ("ramen", "Restaurants"),
-    ("noodle", "Restaurants"),
-    ("steakhouse", "Restaurants"),
-    ("bbq", "Restaurants"),
-    ("seafood", "Restaurants"),
-    ("bistro", "Restaurants"),
-    ("brasserie", "Restaurants"),
-    ("tapas", "Restaurants"),
-    ("dim sum", "Restaurants"),
-    ("buffet", "Restaurants"),
-    ("grill", "Restaurants"),
-    ("kitchen", "Restaurants"),
-    ("eatery", "Restaurants"),
+# Built-in seasons always computed regardless of assumptions
+_BUILTIN_SEASONS: list[dict[str, Any]] = [
+    {"name": "Halloween Season", "month": 10, "day_range": [1, 31]},
+    {"name": "Thanksgiving Season", "month": 11, "day_range": [1, 30]},
 ]
 
 # Weekend context display order and styling
@@ -268,118 +230,6 @@ def _compute_week_by_day(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
             else pd.DataFrame(),
         }
     return by_day
-
-
-# ---------------------------------------------------------------------------
-# Dining helpers
-# ---------------------------------------------------------------------------
-
-
-def _classify_venue_category(raw_category: str) -> str | None:
-    """Map a raw Foursquare category to one of the four display buckets.
-
-    Args:
-        raw_category: Raw category string from a Foursquare export.
-
-    Returns:
-        One of the four :data:`_FOOD_DRINK_CATEGORIES` strings, or ``None``.
-    """
-    lower = raw_category.lower()
-    for substring, bucket in _CATEGORY_RULES:
-        if substring in lower:
-            return bucket
-    return None
-
-
-def _listens_around_checkin(
-    lastfm_df: pd.DataFrame,
-    checkin_ts: int,
-    window_minutes: int = _DINING_WINDOW_MINUTES,
-) -> pd.DataFrame:
-    """Return Last.fm listens within ±``window_minutes`` of *checkin_ts*.
-
-    Args:
-        lastfm_df: Listening history with a ``timestamp`` column.
-        checkin_ts: Unix timestamp of the Swarm check-in.
-        window_minutes: Symmetric window size in minutes.
-
-    Returns:
-        Subset of ``lastfm_df`` within the window; may be empty.
-    """
-    if lastfm_df.empty or "timestamp" not in lastfm_df.columns:
-        return pd.DataFrame()
-    window_sec = window_minutes * 60
-    mask = (lastfm_df["timestamp"] >= checkin_ts - window_sec) & (
-        lastfm_df["timestamp"] <= checkin_ts + window_sec
-    )
-    return lastfm_df[mask]
-
-
-def get_dining_soundtrack_data(
-    swarm_df: pd.DataFrame,
-    lastfm_df: pd.DataFrame,
-    top_n: int = 10,
-) -> dict[str, dict[str, Any]]:
-    """Aggregate Last.fm listens around food/drink check-ins by venue bucket.
-
-    Uses a ±:data:`_DINING_WINDOW_MINUTES` window around each Swarm check-in.
-
-    Args:
-        swarm_df: Swarm DataFrame with ``timestamp`` and ``venue_category``.
-        lastfm_df: Listening history with ``timestamp``, ``artist``, ``album``,
-            ``date_text``.
-        top_n: Maximum top artists/albums to return per bucket.
-
-    Returns:
-        Dict keyed by venue category bucket.  Each value has:
-        ``top_artists`` (DataFrame), ``top_albums`` (DataFrame),
-        ``checkin_count`` (int), ``listen_count`` (int), ``peak_hour`` (int | None).
-    """
-    if swarm_df.empty or lastfm_df.empty:
-        return {}
-    required = {"timestamp", "venue_category"}
-    if not required.issubset(swarm_df.columns) or "timestamp" not in lastfm_df.columns:
-        return {}
-
-    bucket_listens: dict[str, list[pd.DataFrame]] = {c: [] for c in _FOOD_DRINK_CATEGORIES}
-    bucket_checkins: dict[str, int] = {c: 0 for c in _FOOD_DRINK_CATEGORIES}
-
-    for _, row in swarm_df.iterrows():
-        bucket = _classify_venue_category(str(row.get("venue_category", "")))
-        if bucket is None:
-            continue
-        nearby = _listens_around_checkin(lastfm_df, int(row["timestamp"]))
-        if not nearby.empty:
-            bucket_listens[bucket].append(nearby)
-        bucket_checkins[bucket] += 1
-
-    results: dict[str, dict[str, Any]] = {}
-    for cat in _FOOD_DRINK_CATEGORIES:
-        if bucket_checkins[cat] == 0:
-            continue
-        frames = bucket_listens[cat]
-        if not frames:
-            continue
-        combined = pd.concat(frames, ignore_index=True).drop_duplicates()
-        top_artists = get_top_entities(combined, "artist", limit=top_n)
-        top_albums = (
-            get_top_entities(combined, "album", limit=top_n)
-            if "album" in combined.columns
-            else pd.DataFrame()
-        )
-        peak_hour: int | None = None
-        if "date_text" in combined.columns and not combined["date_text"].isna().all():
-            hour_counts = combined["date_text"].dt.hour.value_counts()
-            if not hour_counts.empty:
-                peak_hour = int(hour_counts.idxmax())
-        results[cat] = {
-            "top_artists": top_artists,
-            "top_albums": top_albums,
-            "checkin_count": bucket_checkins[cat],
-            "listen_count": len(combined),
-            "peak_hour": peak_hour,
-        }
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -586,25 +436,26 @@ def _filter_holiday(df: pd.DataFrame, window: dict[str, Any]) -> pd.DataFrame:
 
 
 def _signature_song(df: pd.DataFrame, windows: list[dict[str, Any]]) -> str | None:
-    """Find the most-played track across all holiday windows.
+    """Find the most-played track (name only) across all holiday windows.
 
     Args:
         df: Full listening history.
         windows: All per-year windows for a holiday.
 
     Returns:
-        ``"Artist — Track"`` string, or ``None`` when no data exists.
+        Track name string, or ``None`` when no data exists.
     """
     if not windows or df.empty:
         return None
     subsets = [_filter_holiday(df, w) for w in windows]
     combined = pd.concat(subsets, ignore_index=True)
-    if combined.empty or "track" not in combined.columns or "artist" not in combined.columns:
+    if combined.empty or "track" not in combined.columns:
         return None
-    combined = combined.copy()
-    combined["_song_key"] = combined["artist"] + " — " + combined["track"]
-    top = combined["_song_key"].value_counts()
-    return str(top.index[0]) if not top.empty else None
+    tracks = combined["track"].dropna()
+    tracks = tracks[tracks.str.strip() != ""]
+    if tracks.empty:
+        return None
+    return str(tracks.value_counts().index[0])
 
 
 def _top_n_table(combined: pd.DataFrame, col: str, n: int = 10) -> pd.DataFrame:
@@ -706,8 +557,9 @@ def _compute_lifestyle_data(
     week_stats = _compute_week_stats(df, home_city) if home_city else []
     week_by_day = _compute_week_by_day(df)
 
-    # Transit
-    transit_days: set[str] = get_transit_days(swarm_df)
+    # Transit — use pre-built cache if available, else compute from swarm_df
+    transit_cache_built = os.path.exists(TRANSIT_DAYS_CACHE)
+    transit_days: set[str] = load_transit_days_cache() or get_transit_days(swarm_df)
     transit_df, non_transit_df = split_transit_listens(df, transit_days)
     transit_avg = get_avg_plays_per_day(transit_df)
     non_transit_avg = get_avg_plays_per_day(non_transit_df)
@@ -718,8 +570,9 @@ def _compute_lifestyle_data(
         ((transit_avg - non_transit_avg) / non_transit_avg * 100) if non_transit_avg > 0 else 0.0
     )
 
-    # Dining
-    dining = get_dining_soundtrack_data(swarm_df, df)
+    # Dining — use pre-built cache if available, else compute from swarm_df + df
+    dining_cache_built = os.path.exists(DINING_CACHE)
+    dining = load_dining_cache() or get_dining_soundtrack_data(swarm_df, df)
 
     # Late night
     late_df = _filter_late_night(df)
@@ -729,9 +582,13 @@ def _compute_lifestyle_data(
     late_by_hour = get_late_night_by_hour(df)
     latest_session = find_latest_session(df)
 
-    # Holiday
+    # Holiday — merge user-defined holidays with built-in seasons (user names win)
     holidays_def = assumptions.get("holidays", [])
-    holiday_stats = _compute_holiday_stats(df, holidays_def)
+    assumption_names = {h.get("name", "").lower() for h in holidays_def}
+    merged_holidays = list(holidays_def) + [
+        s for s in _BUILTIN_SEASONS if s["name"].lower() not in assumption_names
+    ]
+    holiday_stats = _compute_holiday_stats(df, merged_holidays)
 
     # Persona signal values (used by badge synthesis)
     home_weekend_plays = next(
@@ -760,8 +617,10 @@ def _compute_lifestyle_data(
             "non_transit_avg": non_transit_avg,
             "delta_pct": transit_delta_pct,
             "top_artists": transit_top,
+            "cache_built": transit_cache_built,
         },
         "dining": dining,
+        "dining_cache_built": dining_cache_built,
         "late_night": {
             "late_rate": late_rate,
             "top_artists": top_late_night,
@@ -945,10 +804,18 @@ def _render_on_the_move(transit_data: dict[str, Any]) -> None:
     top_artists = transit_data["top_artists"]
 
     if days == 0:
-        st.info(
-            "No transit check-ins detected. "
-            "Connect Swarm data with airport or train station check-ins to see this section."
-        )
+        if transit_data.get("cache_built"):
+            st.info(
+                "The Swarm Analysis Cache was built but no transit check-ins were found. "
+                "If you have airport or train station check-ins, try rebuilding the cache "
+                "on the **Foursquare/Swarm Check-ins** data source page."
+            )
+        else:
+            st.info(
+                "No transit data yet. "
+                "Open the **Foursquare/Swarm Check-ins** data source page and click "
+                "**Build Swarm Analysis Cache** to analyse your check-ins."
+            )
         return
 
     top_artist = str(top_artists.iloc[0]["artist"]) if not top_artists.empty else "—"
@@ -983,17 +850,26 @@ def _render_on_the_move(transit_data: dict[str, Any]) -> None:
             )
 
 
-def _render_around_the_table(dining: dict[str, dict[str, Any]]) -> None:
+def _render_around_the_table(dining: dict[str, dict[str, Any]], cache_built: bool = False) -> None:
     """Render the Around the Table section.
 
     Args:
         dining: Dining facet dict from ``get_dining_soundtrack_data``.
+        cache_built: Whether the dining cache file has been built (even if empty).
     """
     if not dining:
-        st.info(
-            "No dining data available. "
-            "Connect Swarm data with restaurant or bar check-ins to see this section."
-        )
+        if cache_built:
+            st.info(
+                "The Swarm Analysis Cache was built but no dining check-ins were found. "
+                "If you have restaurant or bar check-ins, try rebuilding the cache "
+                "on the **Foursquare/Swarm Check-ins** data source page."
+            )
+        else:
+            st.info(
+                "No dining data yet. "
+                "Open the **Foursquare/Swarm Check-ins** data source page and click "
+                "**Build Swarm Analysis Cache** to analyse your check-ins."
+            )
         return
 
     total_plays = sum(v["listen_count"] for v in dining.values())
@@ -1146,7 +1022,7 @@ def _render_years_traditions(holiday_stats: list[dict[str, Any]]) -> None:
         st.metric("Most Listened", top_holiday["name"])
     with cols[2]:
         sig = top_holiday.get("signature_song") or "—"
-        st.metric("Signature Song", sig[:40] + ("…" if len(sig) > 40 else ""))
+        st.metric("#1 Song", sig[:40] + ("…" if len(sig) > 40 else ""))
 
     with st.expander("Year-over-year plays & full breakdowns", expanded=False):
         st.caption(
@@ -1194,7 +1070,7 @@ def _render_years_traditions(holiday_stats: list[dict[str, Any]]) -> None:
                     meta_cols = st.columns(3)
                     meta_cols[0].metric("Total Plays", f"{h['total_plays']:,}")
                     meta_cols[1].metric("Years with Data", h["years_with_data"])
-                    meta_cols[2].metric("Signature Song", sig[:35] + ("…" if len(sig) > 35 else ""))
+                    meta_cols[2].metric("#1 Song", sig[:35] + ("…" if len(sig) > 35 else ""))
 
                     col_a, col_b, col_c = st.columns(3)
                     with col_a:
@@ -1263,6 +1139,8 @@ def render_listening_lifestyle() -> None:
         id(df),
         id(swarm_df),
         hash(json.dumps(assumptions, sort_keys=True, default=str)),
+        os.path.getmtime(TRANSIT_DAYS_CACHE) if os.path.exists(TRANSIT_DAYS_CACHE) else 0,
+        os.path.getmtime(DINING_CACHE) if os.path.exists(DINING_CACHE) else 0,
     )
     if st.session_state.get("_ll_cache_key") != _ll_key:
         with st.spinner("Analysing your listening lifestyle…"):
@@ -1281,7 +1159,7 @@ def render_listening_lifestyle() -> None:
     _render_on_the_move(data["transit"])
 
     st.subheader(":material/restaurant: Around the Table")
-    _render_around_the_table(data["dining"])
+    _render_around_the_table(data["dining"], cache_built=data.get("dining_cache_built", False))
 
     st.subheader(":material/nights_stay: After Dark")
     _render_after_dark(data["late_night"])
