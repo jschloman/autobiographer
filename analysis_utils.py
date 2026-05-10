@@ -1,8 +1,9 @@
 import glob
 import hashlib
 import json
+import math
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -746,6 +747,151 @@ def get_genre_weekly(df: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     return weekly.rename(columns={"artist": "genre"})
 
 
+def detect_trip_periods(
+    assumptions: dict[str, Any],
+    swarm_df: Optional[pd.DataFrame] = None,
+    home_city: Optional[str] = None,
+    min_consecutive_days: int = 2,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Detect trip date ranges from assumptions and Swarm check-ins.
+
+    Combines two sources:
+    1. Explicit ``assumptions["trips"]`` date ranges.
+    2. Swarm check-ins where the city differs from the home city for two or
+       more consecutive days.
+
+    Args:
+        assumptions: Loaded assumptions dict (from :func:`load_assumptions`).
+        swarm_df: Optional Swarm check-in DataFrame with ``timestamp`` and
+            ``city`` columns.
+        home_city: The city to treat as home.  Defaults to
+            ``assumptions["defaults"]["city"]`` when not provided.
+        min_consecutive_days: Minimum consecutive away-days to qualify as a
+            trip when detected from Swarm data.  Defaults to 2.
+
+    Returns:
+        Sorted list of ``(start, end)`` ``pd.Timestamp`` pairs (date
+        precision) representing trip date ranges.  Overlapping ranges from
+        different sources are kept as-is; callers may merge if needed.
+    """
+    periods: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+
+    for trip in assumptions.get("trips", []):
+        try:
+            start = pd.Timestamp(trip["start"]).normalize()
+            end = pd.Timestamp(trip["end"]).normalize()
+            if start <= end:
+                periods.append((start, end))
+        except (KeyError, ValueError, TypeError):
+            continue
+
+    if swarm_df is not None and not swarm_df.empty and "timestamp" in swarm_df.columns:
+        resolved_home = home_city or assumptions.get("defaults", {}).get("city", "")
+
+        sw = swarm_df.copy()
+        sw["date"] = pd.to_datetime(sw["timestamp"], unit="s").dt.normalize()
+        daily = sw.sort_values("timestamp").groupby("date")["city"].last().reset_index()
+
+        if resolved_home:
+            away = daily[daily["city"].str.lower() != resolved_home.lower()].copy()
+        else:
+            away = daily.copy()
+
+        if not away.empty:
+            away = away.sort_values("date").reset_index(drop=True)
+            away["gap"] = away["date"].diff().dt.days.fillna(1)
+            away["run"] = (away["gap"] > 1).cumsum()
+            for _, run_df in away.groupby("run"):
+                if len(run_df) >= min_consecutive_days:
+                    periods.append((run_df["date"].min(), run_df["date"].max()))
+
+    periods.sort(key=lambda t: t[0])
+    return periods
+
+
+def label_listening_context(
+    lastfm_df: pd.DataFrame,
+    trip_periods: list[tuple[pd.Timestamp, pd.Timestamp]],
+) -> pd.DataFrame:
+    """Label each Last.fm row as ``'trip'`` or ``'home'`` based on trip periods.
+
+    Args:
+        lastfm_df: Listening history with a ``date_text`` column.
+        trip_periods: Sorted list of ``(start, end)`` Timestamp pairs from
+            :func:`detect_trip_periods`.
+
+    Returns:
+        Copy of ``lastfm_df`` with a new ``context`` column (``'home'`` or
+        ``'trip'``).
+    """
+    if lastfm_df.empty:
+        df = lastfm_df.copy()
+        df["context"] = pd.Series(dtype="str")
+        return df
+
+    df = lastfm_df.copy()
+    df["context"] = "home"
+
+    if not trip_periods:
+        return df
+
+    dates = df["date_text"].dt.normalize()
+    for start, end in trip_periods:
+        mask = (dates >= start) & (dates <= end)
+        df.loc[mask, "context"] = "trip"
+
+    return df
+
+
+def compute_vacation_stats(df: pd.DataFrame) -> dict[str, Any]:
+    """Compute per-context listening statistics for Home vs. Trip comparisons.
+
+    Calculates the following metrics for each context group (``'home'`` and
+    ``'trip'``): average daily scrobbles, unique artists per day, estimated
+    listening hours, and top artist.
+
+    Args:
+        df: Listening history with ``date_text``, ``artist``, and ``context``
+            columns (as produced by :func:`label_listening_context`).
+
+    Returns:
+        Dict keyed by context string (``'home'``, ``'trip'``), each value
+        being a dict of metric name → value.  Missing contexts return an
+        empty metric dict.
+    """
+    results: dict[str, Any] = {}
+
+    if df.empty or "context" not in df.columns:
+        return results
+
+    for ctx in ("home", "trip"):
+        sub = df[df["context"] == ctx]
+        if sub.empty:
+            results[ctx] = {}
+            continue
+
+        unique_days = sub["date_text"].dt.normalize().nunique()
+        unique_days = max(unique_days, 1)
+        total_plays = len(sub)
+        avg_daily = round(total_plays / unique_days, 1)
+        hours = round(total_plays * 3.5 / 60, 1)
+        unique_artists_per_day = round(
+            sub.groupby(sub["date_text"].dt.normalize())["artist"].nunique().mean(), 1
+        )
+        top_artist = sub["artist"].value_counts().index[0] if not sub.empty else "—"
+
+        results[ctx] = {
+            "avg_daily_scrobbles": avg_daily,
+            "unique_artists_per_day": unique_artists_per_day,
+            "listening_hours": hours,
+            "top_artist": top_artist,
+            "total_plays": total_plays,
+            "unique_days": unique_days,
+        }
+
+    return results
+
+
 def build_life_chapters(
     df: pd.DataFrame,
     assumptions: dict[str, Any],
@@ -800,6 +946,8 @@ def build_life_chapters(
                 "start": pd.Timestamp(start_str),
                 "end": pd.Timestamp(end_str),
                 "kind": "residency",
+                "lat": res.get("lat"),
+                "lng": res.get("lng"),
             }
         )
 
@@ -818,6 +966,8 @@ def build_life_chapters(
                 "start": pd.Timestamp(start_str),
                 "end": pd.Timestamp(end_str),
                 "kind": "trip",
+                "lat": trip.get("lat"),
+                "lng": trip.get("lng"),
             }
         )
 
@@ -889,6 +1039,9 @@ def build_life_chapters(
                 "location": period["location"],
                 "start": start_ts,
                 "end": end_ts,
+                "kind": period["kind"],
+                "lat": period.get("lat"),
+                "lng": period.get("lng"),
                 "total_plays": total_plays,
                 "top_artists": top_artists,
                 "top_album": top_album,
@@ -898,6 +1051,141 @@ def build_life_chapters(
         )
 
     return chapters
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return the great-circle distance in kilometres between two WGS-84 points."""
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    cos1 = math.cos(math.radians(lat1))
+    cos2 = math.cos(math.radians(lat2))
+    a = math.sin(dlat / 2) ** 2 + cos1 * cos2 * math.sin(dlon / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def detect_trips_from_swarm(
+    swarm_df: pd.DataFrame,
+    assumptions: dict[str, Any],
+    radius_km: float = 80.0,
+    gap_days: int = 2,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> list[dict[str, Any]]:
+    """Detect trips from Swarm check-in data by clustering check-ins far from home.
+
+    For each check-in, the home location is resolved via
+    ``get_assumption_location`` using the active residency + trip rules at
+    that point in time.  Check-ins beyond ``radius_km`` from home are
+    collected, sorted chronologically, then split into trip clusters whenever
+    the gap between consecutive check-ins exceeds ``gap_days``.
+
+    Args:
+        swarm_df: Swarm check-in DataFrame with at minimum ``timestamp``
+            (Unix int), ``lat``, ``lng``, ``city``, and ``country`` columns.
+        assumptions: Parsed assumptions dict from ``load_assumptions()``.
+        radius_km: Minimum distance from home (km) to count as away (default 80).
+        gap_days: Days gap between check-ins that starts a new trip cluster (default 2).
+        progress_cb: Optional callable that receives progress strings for streaming UI.
+
+    Returns:
+        List of trip dicts, each containing: ``start``, ``end`` (ISO date
+        strings), ``city``, ``country``, ``lat``, ``lng`` (centroid of the
+        cluster), ``checkin_count`` (int).
+    """
+    if swarm_df.empty:
+        return []
+
+    required = {"lat", "lng", "timestamp"}
+    if not required.issubset(swarm_df.columns):
+        return []
+
+    def log(msg: str) -> None:
+        if progress_cb:
+            progress_cb(msg)
+
+    df = swarm_df.dropna(subset=["lat", "lng"]).copy()
+    df = df[df["lat"] != 0].copy()
+    log(f"Analysing {len(df):,} check-ins with location data…")
+
+    away: list[dict[str, Any]] = []
+    skipped = 0
+
+    for _, row in df.iterrows():
+        ts = int(row["timestamp"])
+        home = get_assumption_location(ts, assumptions)
+        if home is None or home.get("lat") is None or home.get("lng") is None:
+            skipped += 1
+            continue
+
+        dist = _haversine_km(
+            float(home["lat"]), float(home["lng"]), float(row["lat"]), float(row["lng"])
+        )
+        if dist >= radius_km:
+            away.append(
+                {
+                    "timestamp": ts,
+                    "lat": float(row["lat"]),
+                    "lng": float(row["lng"]),
+                    "city": str(row.get("city", "") or ""),
+                    "country": str(row.get("country", "") or ""),
+                }
+            )
+
+    log(
+        f"Found {len(away):,} away-from-home check-ins (>{radius_km:.0f} km). "
+        f"Skipped {skipped:,} without a home reference."
+    )
+
+    if not away:
+        return []
+
+    away.sort(key=lambda x: x["timestamp"])
+
+    gap_seconds = gap_days * 86_400
+    clusters: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = [away[0]]
+    for checkin in away[1:]:
+        if checkin["timestamp"] - current[-1]["timestamp"] <= gap_seconds:
+            current.append(checkin)
+        else:
+            clusters.append(current)
+            current = [checkin]
+    clusters.append(current)
+
+    log(f"Clustered into {len(clusters)} trip(s) using a {gap_days}-day gap.")
+
+    trips: list[dict[str, Any]] = []
+    for cluster in clusters:
+        start_dt = pd.to_datetime(cluster[0]["timestamp"], unit="s", utc=True)
+        end_dt = pd.to_datetime(cluster[-1]["timestamp"], unit="s", utc=True)
+
+        departure = cluster[0]
+        furthest = max(
+            cluster,
+            key=lambda c: _haversine_km(departure["lat"], departure["lng"], c["lat"], c["lng"]),
+        )
+        top_city = furthest["city"] or "Unknown"
+        top_country = furthest["country"] or ""
+        if not top_country:
+            countries = [c["country"] for c in cluster if c["country"]]
+            top_country = max(set(countries), key=countries.count) if countries else ""
+
+        mean_lat = sum(c["lat"] for c in cluster) / len(cluster)
+        mean_lng = sum(c["lng"] for c in cluster) / len(cluster)
+
+        trips.append(
+            {
+                "start": start_dt.strftime("%Y-%m-%d"),
+                "end": end_dt.strftime("%Y-%m-%d"),
+                "city": top_city,
+                "country": top_country,
+                "lat": round(mean_lat, 4),
+                "lng": round(mean_lng, 4),
+                "checkin_count": len(cluster),
+            }
+        )
+
+    return trips
 
 
 def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
