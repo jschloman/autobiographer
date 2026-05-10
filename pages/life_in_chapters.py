@@ -170,11 +170,10 @@ def _render_chapter_map(
         center={"lat": center_lat, "lon": center_lng},
     )
     fig.update_layout(
-        map_style="carto-darkmatter",
+        map_style="open-street-map",
         height=220,
         margin={"r": 0, "t": 0, "l": 0, "b": 0},
     )
-    apply_dark_theme(fig)
     st.plotly_chart(fig, width="stretch", key=chart_key)
 
 
