@@ -222,18 +222,22 @@ def _render_trip_detector(assumptions: dict[str, Any], detected_trips_path: str)
             key="trip_gap_days",
         )
 
-    if st.button(":material/travel_explore: Detect trips", key="detect_trips_btn"):
-        with st.status("Detecting trips from Swarm check-ins…", expanded=True) as status:
+    detecting = st.session_state.get("_trips_detecting", False)
+    if st.button(
+        ":material/travel_explore: Detect trips",
+        key="detect_trips_btn",
+        disabled=detecting,
+    ):
+        st.session_state["_trips_detecting"] = True
+        with st.spinner("Detecting trips from Swarm check-ins…"):
             trips = detect_trips_from_swarm(
                 swarm_df,
                 assumptions,
                 radius_km=float(radius_km),
                 gap_days=int(gap_days),
-                progress_cb=st.write,
             )
-            _save_detected_trips_cache(trips, detected_trips_path)
-            label = f"Done — {len(trips)} trip(s) detected" if trips else "Done — no trips detected"
-            status.update(label=label, state="complete")
+        _save_detected_trips_cache(trips, detected_trips_path)
+        st.session_state["_trips_detecting"] = False
         st.rerun()
 
 
