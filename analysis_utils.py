@@ -1214,3 +1214,79 @@ def get_artist_monthly_ranks(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
         monthly.groupby("month")["plays"].rank(method="min", ascending=False).astype(int)
     )
     return monthly[["month", "artist", "rank"]]
+
+
+# ---------------------------------------------------------------------------
+# Transit / airport analysis
+# ---------------------------------------------------------------------------
+
+#: Foursquare category substrings that indicate a transit hub.
+TRANSIT_CATEGORY_KEYWORDS: list[str] = [
+    "Airport",
+    "Train Station",
+    "Transit",
+    "Bus Station",
+    "Metro",
+    "Subway",
+    "Ferry",
+    "Port",
+    "Rail",
+]
+
+
+def get_transit_days(swarm_df: pd.DataFrame) -> set[str]:
+    """Return calendar date strings (YYYY-MM-DD) that contain a transit check-in.
+
+    Args:
+        swarm_df: Output of :func:`load_swarm_data`, which must include a
+            ``venue_category`` column and a ``timestamp`` column (Unix seconds).
+
+    Returns:
+        Set of ISO date strings (e.g. ``{"2023-06-12", "2023-06-15"}``).
+    """
+    if swarm_df.empty or "venue_category" not in swarm_df.columns:
+        return set()
+    pattern = "|".join(TRANSIT_CATEGORY_KEYWORDS)
+    transit_rows = swarm_df[
+        swarm_df["venue_category"].str.contains(pattern, case=False, na=False)
+    ].copy()
+    if transit_rows.empty:
+        return set()
+    transit_rows["date"] = pd.to_datetime(transit_rows["timestamp"], unit="s").dt.strftime(
+        "%Y-%m-%d"
+    )
+    return set(transit_rows["date"].unique())
+
+
+def split_transit_listens(
+    listens_df: pd.DataFrame, transit_days: set[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Partition a listening DataFrame into transit-day and non-transit-day rows.
+
+    Args:
+        listens_df: Listening history with a ``date_text`` datetime column.
+        transit_days: Set of ISO date strings returned by :func:`get_transit_days`.
+
+    Returns:
+        Tuple ``(transit_df, non_transit_df)`` — both are subsets of ``listens_df``.
+    """
+    if listens_df.empty or "date_text" not in listens_df.columns:
+        return listens_df.iloc[:0].copy(), listens_df.iloc[:0].copy()
+    date_strs = listens_df["date_text"].dt.strftime("%Y-%m-%d")
+    mask = date_strs.isin(transit_days)
+    return listens_df[mask].copy(), listens_df[~mask].copy()
+
+
+def get_avg_plays_per_day(df: pd.DataFrame) -> float:
+    """Return the mean number of plays per calendar day.
+
+    Args:
+        df: Listening history with a ``date_text`` datetime column.
+
+    Returns:
+        Average plays per day, or 0.0 when the DataFrame is empty.
+    """
+    if df.empty or "date_text" not in df.columns:
+        return 0.0
+    unique_days = int(df["date_text"].dt.date.nunique())
+    return float(len(df)) / unique_days if unique_days > 0 else 0.0
