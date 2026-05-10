@@ -652,18 +652,28 @@ def render_life_in_chapters() -> None:
         )
         return
 
-    chapters = build_life_chapters(df, merged_assumptions)
+    # Cache expensive computations in session state — skipped on carousel navigation
+    # because neither df nor assumptions changes when the user moves between years.
+    _lic_key = (id(df), hash(json.dumps(merged_assumptions, sort_keys=True, default=str)))
+    if st.session_state.get("_lic_cache_key") != _lic_key:
+        _chapters_all = build_life_chapters(df, merged_assumptions)
+        _trip_periods = detect_trip_periods(
+            merged_assumptions,
+            swarm_df=swarm_df if swarm_df is not None else pd.DataFrame(),
+        )
+        _df_labeled = label_listening_context(df, _trip_periods)
+        st.session_state["_lic_cache_key"] = _lic_key
+        st.session_state["_lic_chapters"] = _chapters_all
+        st.session_state["_lic_trip_periods"] = _trip_periods
+        st.session_state["_lic_df_labeled"] = _df_labeled
+
+    chapters: list[dict[str, Any]] = st.session_state["_lic_chapters"]
+    trip_periods: list[tuple[pd.Timestamp, pd.Timestamp]] = st.session_state["_lic_trip_periods"]
+    df_labeled: pd.DataFrame = st.session_state["_lic_df_labeled"]
 
     if not chapters:
         st.info("No chapters could be built from the assumptions data.")
         return
-
-    # Detect trip periods and label the full listening history
-    trip_periods = detect_trip_periods(
-        merged_assumptions,
-        swarm_df=swarm_df if swarm_df is not None else pd.DataFrame(),
-    )
-    df_labeled = label_listening_context(df, trip_periods)
 
     # ── Summary banner ────────────────────────────────────────────────────────
     total_chapter_plays = sum(c["total_plays"] for c in chapters)
