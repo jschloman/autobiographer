@@ -218,8 +218,11 @@ def get_assumption_location(ts: int, assumptions: dict[str, Any]) -> Optional[di
     """
     dt_utc = pd.to_datetime([ts], unit="s", utc=True)
 
-    # Simple recurring holiday check
+    # Recurring holiday check — skip placeholder holidays (lat=0, lng=0) used
+    # only for analytics, not for location assignment.
     for holiday in assumptions.get("holidays", []):
+        if holiday.get("lat", 0) == 0 and holiday.get("lng", 0) == 0:
+            continue
         tz = holiday.get("timezone", "UTC")
         local_time = dt_utc.tz_convert(tz)[0]
         month = holiday.get("month")
@@ -381,10 +384,13 @@ def apply_swarm_offsets(
         # For efficiency, compute local time once per unique timezone used in assumptions
         tz_to_local = {}
 
-        # Apply Holidays (recurring)
+        # Apply Holidays (recurring) — skip placeholder entries (lat=0, lng=0)
+        # that are used only for analytics, not for location assignment.
         for holiday in assumptions.get("holidays", []):
             if not remaining_mask.any():
                 break
+            if holiday.get("lat", 0) == 0 and holiday.get("lng", 0) == 0:
+                continue
             tz = holiday.get("timezone", "UTC")
             if tz not in tz_to_local:
                 tz_to_local[tz] = dt_utc.dt.tz_convert(tz)
@@ -1231,6 +1237,14 @@ TRANSIT_CATEGORY_KEYWORDS: list[str] = [
     "Ferry",
     "Port",
     "Rail",
+    "Rest Area",
+    "Rest Stop",
+    "Travel Plaza",
+    "Service Plaza",
+    "Turnpike",
+    "Toll",
+    "Gas Station",
+    "Truck Stop",
 ]
 
 
