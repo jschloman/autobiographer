@@ -517,12 +517,13 @@ def _render_chapter_card(
     # ── Chapter bullet ───────────────────────────────────────────────────────
     st.markdown(
         f"""
-        <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
-          <div style="width:14px; height:14px; border-radius:50%;
-                      background:{accent}; flex-shrink:0; margin:auto;
+        <div style="display:flex; align-items:center; margin-bottom:4px;">
+          <div style="flex:1;"></div>
+          <div style="width:14px; height:14px; border-radius:50%; flex-shrink:0;
+                      background:{accent};
                       box-shadow: 0 0 0 3px {CARD_BG}, 0 0 0 5px {accent}44;"></div>
-          <span style="color:{TEXT_DIM}; font-size:0.8rem; letter-spacing:0.05em;
-                        text-transform:uppercase; font-weight:600;">
+          <span style="flex:1; padding-left:12px; color:{TEXT_DIM}; font-size:0.8rem;
+                        letter-spacing:0.05em; text-transform:uppercase; font-weight:600;">
             {date_str} &nbsp;·&nbsp; {duration}
           </span>
         </div>
