@@ -337,6 +337,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
+    @patch("streamlit.button")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
     @patch("streamlit.expander")
@@ -359,6 +360,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_expander: MagicMock,
         mock_columns: MagicMock,
         mock_metric: MagicMock,
+        mock_button: MagicMock,
     ) -> None:
         df = self._make_full_df()
         assumptions = _make_assumptions(include_trips=True)
@@ -399,6 +401,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_header.assert_called_with("Life in Chapters")
         self.assertTrue(mock_metric.called)
 
+    @patch("streamlit.button")
     @patch("streamlit.metric")
     @patch("streamlit.columns")
     @patch("streamlit.expander")
@@ -423,6 +426,7 @@ class TestRenderLifeInChapters(unittest.TestCase):
         mock_expander: MagicMock,
         mock_columns: MagicMock,
         mock_metric: MagicMock,
+        mock_button: MagicMock,
     ) -> None:
         """Chapters with plays below filter threshold are hidden."""
         df = self._make_full_df()

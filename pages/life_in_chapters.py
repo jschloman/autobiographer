@@ -689,20 +689,33 @@ def render_life_in_chapters() -> None:
         )
         chapters = [c for c in chapters if c["total_plays"] >= min_plays_filter]
 
-    # ── Year jump ─────────────────────────────────────────────────────────────
+    # ── Year carousel ─────────────────────────────────────────────────────────
     all_years = sorted({yr for c in chapters for yr in range(c["start"].year, c["end"].year + 1)})
     if len(all_years) > 1:
-        year_options = ["All years"] + [str(y) for y in all_years]
-        selected_year = st.selectbox(
-            "Jump to year",
-            year_options,
-            index=0,
-            key="chapter_year",
-            label_visibility="collapsed",
-        )
-        if selected_year != "All years":
-            yr = int(selected_year)
-            chapters = [c for c in chapters if c["start"].year <= yr <= c["end"].year]
+        if st.session_state.get("chapters_selected_year") not in all_years:
+            st.session_state["chapters_selected_year"] = all_years[-1]
+        cur_yr: int = st.session_state["chapters_selected_year"]
+        cur_idx = all_years.index(cur_yr)
+
+        col_prev, col_yr, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("◀", key="year_carousel_prev", disabled=(cur_idx == 0)):
+                if cur_idx > 0:
+                    st.session_state["chapters_selected_year"] = all_years[cur_idx - 1]
+                    st.rerun()
+        with col_yr:
+            st.markdown(
+                f"<div style='text-align:center; font-size:1.1rem; font-weight:700; "
+                f"color:{ACCENT_INDIGO};'>{cur_yr}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_next:
+            if st.button("▶", key="year_carousel_next", disabled=(cur_idx == len(all_years) - 1)):
+                if cur_idx < len(all_years) - 1:
+                    st.session_state["chapters_selected_year"] = all_years[cur_idx + 1]
+                    st.rerun()
+
+        chapters = [c for c in chapters if c["start"].year <= cur_yr <= c["end"].year]
 
     if not chapters:
         st.info("No chapters match the current filter.")

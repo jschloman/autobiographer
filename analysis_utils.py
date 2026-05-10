@@ -1159,10 +1159,16 @@ def detect_trips_from_swarm(
         start_dt = pd.to_datetime(cluster[0]["timestamp"], unit="s", utc=True)
         end_dt = pd.to_datetime(cluster[-1]["timestamp"], unit="s", utc=True)
 
-        cities = [c["city"] for c in cluster if c["city"]]
-        countries = [c["country"] for c in cluster if c["country"]]
-        top_city = max(set(cities), key=cities.count) if cities else "Unknown"
-        top_country = max(set(countries), key=countries.count) if countries else ""
+        departure = cluster[0]
+        furthest = max(
+            cluster,
+            key=lambda c: _haversine_km(departure["lat"], departure["lng"], c["lat"], c["lng"]),
+        )
+        top_city = furthest["city"] or "Unknown"
+        top_country = furthest["country"] or ""
+        if not top_country:
+            countries = [c["country"] for c in cluster if c["country"]]
+            top_country = max(set(countries), key=countries.count) if countries else ""
 
         mean_lat = sum(c["lat"] for c in cluster) / len(cluster)
         mean_lng = sum(c["lng"] for c in cluster) / len(cluster)
