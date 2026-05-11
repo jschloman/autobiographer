@@ -8,12 +8,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from analysis_utils import (
-    _classify_venue_category,
-    _listens_around_checkin,
     get_avg_plays_per_day,
-    get_dining_soundtrack_data,
-    get_transit_days,
-    split_transit_listens,
 )
 from pages.listening_lifestyle import (
     _add_location_context,
@@ -102,62 +97,6 @@ def _make_swarm_df(
     return pd.DataFrame({"venue_category": venues, "timestamp": timestamps})
 
 
-# ---------------------------------------------------------------------------
-# analysis_utils transit additions
-# ---------------------------------------------------------------------------
-
-
-class TestGetTransitDays(unittest.TestCase):
-    """Tests for analysis_utils.get_transit_days."""
-
-    def test_returns_dates_with_airport_checkin(self) -> None:
-        swarm = pd.DataFrame(
-            {
-                "venue_category": ["Airport", "Coffee Shop"],
-                "timestamp": [1700000000, 1700003600],
-            }
-        )
-        days = get_transit_days(swarm)
-        self.assertEqual(len(days), 1)
-
-    def test_empty_swarm_returns_empty_set(self) -> None:
-        self.assertEqual(get_transit_days(pd.DataFrame()), set())
-
-    def test_no_transit_category_returns_empty(self) -> None:
-        swarm = pd.DataFrame({"venue_category": ["Museum", "Park"], "timestamp": [1, 2]})
-        self.assertEqual(get_transit_days(swarm), set())
-
-    def test_case_insensitive_matching(self) -> None:
-        swarm = pd.DataFrame({"venue_category": ["airport"], "timestamp": [1700000000]})
-        days = get_transit_days(swarm)
-        self.assertEqual(len(days), 1)
-
-
-class TestSplitTransitListens(unittest.TestCase):
-    """Tests for analysis_utils.split_transit_listens."""
-
-    def test_partitions_into_two_sets(self) -> None:
-        df = _make_listens_df(
-            days=["2024-01-01", "2024-01-02"],
-            hours=[10, 10],
-        )
-        transit_days = {"2024-01-01"}
-        transit, non = split_transit_listens(df, transit_days)
-        self.assertEqual(len(transit), 1)
-        self.assertEqual(len(non), 1)
-
-    def test_empty_transit_days_yields_all_non_transit(self) -> None:
-        df = _make_listens_df()
-        transit, non = split_transit_listens(df, set())
-        self.assertEqual(len(transit), 0)
-        self.assertEqual(len(non), len(df))
-
-    def test_empty_df_returns_two_empty_dfs(self) -> None:
-        transit, non = split_transit_listens(pd.DataFrame(), {"2024-01-01"})
-        self.assertTrue(transit.empty)
-        self.assertTrue(non.empty)
-
-
 class TestGetAvgPlaysPerDay(unittest.TestCase):
     """Tests for analysis_utils.get_avg_plays_per_day."""
 
@@ -234,104 +173,6 @@ class TestComputeWeekStats(unittest.TestCase):
         for s in stats:
             if s["is_home"]:
                 self.assertEqual(s["play_count"], 0)
-
-
-# ---------------------------------------------------------------------------
-# Dining helpers
-# ---------------------------------------------------------------------------
-
-
-class TestClassifyVenueCategory(unittest.TestCase):
-    """Tests for _classify_venue_category."""
-
-    def test_restaurant_maps_correctly(self) -> None:
-        self.assertEqual(_classify_venue_category("Italian Restaurant"), "Restaurants")
-
-    def test_bar_maps_correctly(self) -> None:
-        self.assertEqual(_classify_venue_category("Dive Bar"), "Bars & Nightlife")
-
-    def test_cafe_maps_correctly(self) -> None:
-        self.assertEqual(_classify_venue_category("Coffee Shop"), "Cafes")
-
-    def test_fast_food_maps_correctly(self) -> None:
-        self.assertEqual(_classify_venue_category("Burger Joint"), "Fast Food")
-
-    def test_unknown_category_returns_none(self) -> None:
-        self.assertIsNone(_classify_venue_category("Museum"))
-
-    def test_empty_string_returns_none(self) -> None:
-        self.assertIsNone(_classify_venue_category(""))
-
-    def test_case_insensitive(self) -> None:
-        self.assertEqual(_classify_venue_category("ITALIAN RESTAURANT"), "Restaurants")
-
-
-class TestListensAroundCheckin(unittest.TestCase):
-    """Tests for _listens_around_checkin."""
-
-    def test_returns_listens_within_window(self) -> None:
-        base_ts = 1700000000
-        df = pd.DataFrame(
-            {
-                "timestamp": [base_ts - 1800, base_ts, base_ts + 1800],
-                "artist": ["A", "B", "C"],
-            }
-        )
-        result = _listens_around_checkin(df, base_ts, window_minutes=30)
-        self.assertEqual(len(result), 3)
-
-    def test_excludes_listens_outside_window(self) -> None:
-        base_ts = 1700000000
-        df = pd.DataFrame({"timestamp": [base_ts - 10000, base_ts + 10000], "artist": ["X", "Y"]})
-        result = _listens_around_checkin(df, base_ts, window_minutes=30)
-        self.assertTrue(result.empty)
-
-    def test_empty_df_returns_empty(self) -> None:
-        result = _listens_around_checkin(pd.DataFrame(), 1700000000)
-        self.assertTrue(result.empty)
-
-
-class TestGetDiningSoundtrackData(unittest.TestCase):
-    """Tests for get_dining_soundtrack_data."""
-
-    def test_returns_dict_with_bucket_keys(self) -> None:
-        base_ts = 1700000000
-        swarm = pd.DataFrame({"venue_category": ["Italian Restaurant"], "timestamp": [base_ts]})
-        listens = pd.DataFrame(
-            {
-                "timestamp": [base_ts - 1800, base_ts, base_ts + 1800],
-                "artist": ["Artist A", "Artist A", "Artist B"],
-                "date_text": pd.to_datetime(
-                    ["2023-11-14 10:00", "2023-11-14 11:00", "2023-11-14 12:00"]
-                ),
-            }
-        )
-        result = get_dining_soundtrack_data(swarm, listens)
-        self.assertIn("Restaurants", result)
-
-    def test_empty_inputs_return_empty_dict(self) -> None:
-        self.assertEqual(get_dining_soundtrack_data(pd.DataFrame(), pd.DataFrame()), {})
-
-    def test_checkin_with_no_nearby_listens_excluded(self) -> None:
-        base_ts = 1700000000
-        swarm = pd.DataFrame({"venue_category": ["Italian Restaurant"], "timestamp": [base_ts]})
-        # Listens are far outside the 30-min window
-        listens = pd.DataFrame(
-            {
-                "timestamp": [base_ts - 7200, base_ts + 7200],
-                "artist": ["A", "B"],
-                "date_text": pd.to_datetime(["2023-11-14 08:00", "2023-11-14 14:00"]),
-            }
-        )
-        result = get_dining_soundtrack_data(swarm, listens)
-        # No listens within window, so bucket has checkins but no frames → excluded
-        self.assertNotIn("Restaurants", result)
-
-    def test_missing_required_columns_returns_empty(self) -> None:
-        bad_swarm = pd.DataFrame({"venue": ["Italian Restaurant"]})  # no timestamp col
-        listens = _make_listens_df()
-        result = get_dining_soundtrack_data(bad_swarm, listens)
-        self.assertEqual(result, {})
 
 
 # ---------------------------------------------------------------------------
@@ -778,15 +619,6 @@ class TestRenderListeningLifestyle(unittest.TestCase):
         fake_data: dict = {
             "week": [],
             "week_by_day": _week_by_day,
-            "transit": {
-                "days": 0,
-                "transit_df": pd.DataFrame(),
-                "transit_avg": 0.0,
-                "non_transit_avg": 0.0,
-                "delta_pct": 0.0,
-                "top_artists": pd.DataFrame(columns=["artist", "Plays"]),
-            },
-            "dining": {},
             "late_night": {
                 "late_rate": 0.05,
                 "top_artists": _empty_top10.copy(),
@@ -799,8 +631,6 @@ class TestRenderListeningLifestyle(unittest.TestCase):
                 "late_rate": 0.05,
                 "weekend_boost": 0.0,
                 "away_share": 0.0,
-                "transit_days": 0,
-                "dining_plays": 0,
                 "holiday_count": 0,
             },
         }
@@ -820,7 +650,7 @@ class TestRenderListeningLifestyle(unittest.TestCase):
         spinner_ctx.__enter__ = MagicMock(return_value=None)
         spinner_ctx.__exit__ = MagicMock(return_value=False)
         mock_st.spinner.return_value = spinner_ctx
-        mock_st.columns.return_value = [MagicMock() for _ in range(4)]
+        mock_st.columns.return_value = [MagicMock() for _ in range(3)]
 
         render_listening_lifestyle()
         mock_st.header.assert_called_once_with("Listening Lifestyle")

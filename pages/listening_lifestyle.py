@@ -1,10 +1,8 @@
 """Listening Lifestyle page — a multi-faceted portrait of how you listen to music.
 
-Synthesises five listening contexts into a single narrative page:
+Synthesises three listening contexts into a single narrative page:
 
 - **Your Week**          Home vs. away, weekday vs. weekend patterns
-- **On the Move**        Music during transit (airports, train stations)
-- **Around the Table**   Dining soundtrack (restaurants, bars, cafes)
 - **After Dark**         Late-night listening, midnight–4 AM
 - **Year's Traditions**  Holiday listening patterns
 
@@ -20,7 +18,6 @@ sections, scrolling) never re-trigger computation.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import pandas as pd
@@ -29,16 +26,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analysis_utils import (
-    DINING_CACHE,
-    TRANSIT_DAYS_CACHE,
-    get_avg_plays_per_day,
-    get_dining_soundtrack_data,
-    get_top_entities,
-    get_transit_days,
     load_assumptions,
-    load_dining_cache,
-    load_transit_days_cache,
-    split_transit_listens,
 )
 from components.theme import (
     ACCENT_CYAN,
@@ -49,7 +37,6 @@ from components.theme import (
     ACCENT_PURPLE,
     ACCENT_YELLOW,
     COLORWAY,
-    TEXT_DIM,
     apply_dark_theme,
 )
 
@@ -87,13 +74,11 @@ _GRID_ORDER: list[tuple[bool, bool]] = [
     (True, False),
 ]
 
-# Persona badge definitions: (label, accent_color, description)
+# Persona badge definitions: (label, accent_color, signal_key)
 _PERSONA_BADGES: list[tuple[str, str, str]] = [
     ("Night Owl", ACCENT_INDIGO, "late_rate"),
     ("Weekend Listener", ACCENT_CYAN, "weekend_boost"),
     ("Globe Trotter", ACCENT_ORANGE, "away_share"),
-    ("Transit Listener", ACCENT_GREEN, "transit_days"),
-    ("Dining Devotee", ACCENT_PINK, "dining_plays"),
     ("Holiday Traditionalist", ACCENT_YELLOW, "holiday_count"),
 ]
 
@@ -540,39 +525,21 @@ def _compute_lifestyle_data(
     swarm_df: pd.DataFrame,
     assumptions: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run all five lifestyle analyses and return a combined data dict.
+    """Run lifestyle analyses for week, late night, and holidays.
 
     Args:
         df: Full listening history.
-        swarm_df: Swarm check-in DataFrame (may be empty).
+        swarm_df: Swarm check-in DataFrame (may be empty, unused currently).
         assumptions: Parsed assumptions dict.
 
     Returns:
-        Dict with keys ``week``, ``transit``, ``dining``, ``late_night``,
-        ``holiday`` and their computed values.
+        Dict with keys ``week``, ``late_night``, ``holiday`` and their computed values.
     """
     home_city: str = assumptions.get("defaults", {}).get("city", "")
 
     # Week / weekend context
     week_stats = _compute_week_stats(df, home_city) if home_city else []
     week_by_day = _compute_week_by_day(df)
-
-    # Transit — use pre-built cache if available, else compute from swarm_df
-    transit_cache_built = os.path.exists(TRANSIT_DAYS_CACHE)
-    transit_days: set[str] = load_transit_days_cache() or get_transit_days(swarm_df)
-    transit_df, non_transit_df = split_transit_listens(df, transit_days)
-    transit_avg = get_avg_plays_per_day(transit_df)
-    non_transit_avg = get_avg_plays_per_day(non_transit_df)
-    transit_top = (
-        get_top_entities(transit_df, "artist", limit=10) if not transit_df.empty else pd.DataFrame()
-    )
-    transit_delta_pct = (
-        ((transit_avg - non_transit_avg) / non_transit_avg * 100) if non_transit_avg > 0 else 0.0
-    )
-
-    # Dining — use pre-built cache if available, else compute from swarm_df + df
-    dining_cache_built = os.path.exists(DINING_CACHE)
-    dining = load_dining_cache() or get_dining_soundtrack_data(swarm_df, df)
 
     # Late night
     late_df = _filter_late_night(df)
@@ -605,22 +572,10 @@ def _compute_lifestyle_data(
         if home_weekday_plays > 0
         else 0.0
     )
-    total_dining_plays = sum(v["listen_count"] for v in dining.values())
 
     return {
         "week": week_stats,
         "week_by_day": week_by_day,
-        "transit": {
-            "days": len(transit_days),
-            "transit_df": transit_df,
-            "transit_avg": transit_avg,
-            "non_transit_avg": non_transit_avg,
-            "delta_pct": transit_delta_pct,
-            "top_artists": transit_top,
-            "cache_built": transit_cache_built,
-        },
-        "dining": dining,
-        "dining_cache_built": dining_cache_built,
         "late_night": {
             "late_rate": late_rate,
             "top_artists": top_late_night,
@@ -633,8 +588,6 @@ def _compute_lifestyle_data(
             "late_rate": late_rate,
             "weekend_boost": weekend_boost,
             "away_share": away_share,
-            "transit_days": len(transit_days),
-            "dining_plays": total_dining_plays,
             "holiday_count": len(holiday_stats),
         },
     }
@@ -656,10 +609,6 @@ def _synthesize_persona(signals: dict[str, Any]) -> list[dict[str, str]]:
         badges.append({"label": "Weekend Listener", "color": ACCENT_CYAN})
     if signals.get("away_share", 0) >= 0.20:
         badges.append({"label": "Globe Trotter", "color": ACCENT_ORANGE})
-    if signals.get("transit_days", 0) >= 5:
-        badges.append({"label": "Transit Listener", "color": ACCENT_GREEN})
-    if signals.get("dining_plays", 0) >= 30:
-        badges.append({"label": "Dining Devotee", "color": ACCENT_PINK})
     if signals.get("holiday_count", 0) >= 2:
         badges.append({"label": "Holiday Traditionalist", "color": ACCENT_YELLOW})
     return badges if badges else [{"label": "Music Lover", "color": ACCENT_CYAN}]
@@ -691,15 +640,14 @@ def _render_persona_banner(data: dict[str, Any]) -> None:
     )
 
     signals = data["persona_signals"]
-    cols = st.columns(4)
+    cols = st.columns(3)
     with cols[0]:
         late_pct = signals["late_rate"] * 100
         st.metric("Late-Night Plays", f"{late_pct:.1f}%")
     with cols[1]:
-        st.metric("Transit Days", f"{signals['transit_days']:,}")
+        boost_pct = signals["weekend_boost"] * 100
+        st.metric("Weekend Boost", f"{boost_pct:+.0f}%", help="Weekend vs. weekday plays at home")
     with cols[2]:
-        st.metric("Dining Listens", f"{signals['dining_plays']:,}")
-    with cols[3]:
         st.metric("Holidays Tracked", f"{signals['holiday_count']:,}")
     st.divider()
 
@@ -791,125 +739,6 @@ def _render_your_week(
                         albums_df = day_data["top_albums"]
                         if not albums_df.empty:
                             st.dataframe(albums_df, hide_index=True, width="stretch")
-
-
-def _render_on_the_move(transit_data: dict[str, Any]) -> None:
-    """Render the On the Move section.
-
-    Args:
-        transit_data: Transit facet dict from ``_compute_lifestyle_data``.
-    """
-    days = transit_data["days"]
-    delta_pct = transit_data["delta_pct"]
-    top_artists = transit_data["top_artists"]
-
-    if days == 0:
-        if transit_data.get("cache_built"):
-            st.info(
-                "The Swarm Analysis Cache was built but no transit check-ins were found. "
-                "If you have airport or train station check-ins, try rebuilding the cache "
-                "on the **Foursquare/Swarm Check-ins** data source page."
-            )
-        else:
-            st.info(
-                "No transit data yet. "
-                "Open the **Foursquare/Swarm Check-ins** data source page and click "
-                "**Build Swarm Analysis Cache** to analyse your check-ins."
-            )
-        return
-
-    top_artist = str(top_artists.iloc[0]["artist"]) if not top_artists.empty else "—"
-
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric("Transit Days", f"{days:,}")
-    with cols[1]:
-        delta_label = f"{abs(delta_pct):.0f}% {'more' if delta_pct >= 0 else 'fewer'} plays/day"
-        st.metric("vs. Normal Days", delta_label)
-    with cols[2]:
-        st.metric("Top Transit Artist", top_artist)
-
-    with st.expander("Top artists on transit days", expanded=False):
-        if top_artists.empty:
-            st.caption("No artist data for transit days.")
-        else:
-            fig = px.bar(
-                top_artists.head(10),
-                x="Plays",
-                y="artist",
-                orientation="h",
-                color_discrete_sequence=[ACCENT_GREEN],
-                labels={"artist": "", "Plays": "Plays"},
-            )
-            fig = apply_dark_theme(fig)
-            fig.update_layout(height=320, yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig, width="stretch", key="lifestyle_transit_bar")
-            st.caption(
-                f"Average **{transit_data['transit_avg']:.1f}** plays/day on transit days "
-                f"vs **{transit_data['non_transit_avg']:.1f}** on other days."
-            )
-
-
-def _render_around_the_table(dining: dict[str, dict[str, Any]], cache_built: bool = False) -> None:
-    """Render the Around the Table section.
-
-    Args:
-        dining: Dining facet dict from ``get_dining_soundtrack_data``.
-        cache_built: Whether the dining cache file has been built (even if empty).
-    """
-    if not dining:
-        if cache_built:
-            st.info(
-                "The Swarm Analysis Cache was built but no dining check-ins were found. "
-                "If you have restaurant or bar check-ins, try rebuilding the cache "
-                "on the **Foursquare/Swarm Check-ins** data source page."
-            )
-        else:
-            st.info(
-                "No dining data yet. "
-                "Open the **Foursquare/Swarm Check-ins** data source page and click "
-                "**Build Swarm Analysis Cache** to analyse your check-ins."
-            )
-        return
-
-    total_plays = sum(v["listen_count"] for v in dining.values())
-    best_bucket = max(dining, key=lambda k: dining[k]["listen_count"])
-    best_artist_df = dining[best_bucket]["top_artists"]
-    best_artist = str(best_artist_df.iloc[0]["artist"]) if not best_artist_df.empty else "—"
-
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric("Dining Listens", f"{total_plays:,}")
-    with cols[1]:
-        st.metric("Most Musical Venue", best_bucket)
-    with cols[2]:
-        st.metric("Top Dining Artist", best_artist)
-
-    bucket_colors = {
-        "Restaurants": ACCENT_INDIGO,
-        "Bars & Nightlife": ACCENT_PURPLE,
-        "Cafes": ACCENT_CYAN,
-        "Fast Food": ACCENT_ORANGE,
-    }
-
-    with st.expander("Breakdown by venue type", expanded=False):
-        bucket_cols = st.columns(len(dining))
-        for i, (cat, stats) in enumerate(dining.items()):
-            color = bucket_colors.get(cat, ACCENT_INDIGO)
-            with bucket_cols[i]:
-                st.markdown(
-                    f"<span style='color:{color}; font-weight:700; font-size:0.9rem;'>{cat}</span>",
-                    unsafe_allow_html=True,
-                )
-                st.caption(f"{stats['checkin_count']} check-ins · {stats['listen_count']} listens")
-                if stats["peak_hour"] is not None:
-                    st.caption(f"Peak: {stats['peak_hour']:02d}:00")
-                for _, row in stats["top_artists"].head(5).iterrows():
-                    st.markdown(
-                        f"<span style='font-size:0.85rem; color:{TEXT_DIM};'>"
-                        f"· {row['artist']}</span>",
-                        unsafe_allow_html=True,
-                    )
 
 
 def _render_after_dark(late_data: dict[str, Any]) -> None:
@@ -1118,7 +947,7 @@ def render_listening_lifestyle() -> None:
     st.header("Listening Lifestyle")
     st.caption(
         "A portrait of how music fits into the different moments of your life — "
-        "your week, your commute, your meals, your nights, your year."
+        "your week, your late nights, and your annual traditions."
     )
 
     df: pd.DataFrame | None = st.session_state.get("df")
@@ -1137,10 +966,7 @@ def render_listening_lifestyle() -> None:
 
     _ll_key = (
         id(df),
-        id(swarm_df),
         hash(json.dumps(assumptions, sort_keys=True, default=str)),
-        os.path.getmtime(TRANSIT_DAYS_CACHE) if os.path.exists(TRANSIT_DAYS_CACHE) else 0,
-        os.path.getmtime(DINING_CACHE) if os.path.exists(DINING_CACHE) else 0,
     )
     if st.session_state.get("_ll_cache_key") != _ll_key:
         with st.spinner("Analysing your listening lifestyle…"):
@@ -1154,12 +980,6 @@ def render_listening_lifestyle() -> None:
 
     st.subheader(":material/calendar_view_week: Your Week")
     _render_your_week(data["week"], data["week_by_day"])
-
-    st.subheader(":material/train: On the Move")
-    _render_on_the_move(data["transit"])
-
-    st.subheader(":material/restaurant: Around the Table")
-    _render_around_the_table(data["dining"], cache_built=data.get("dining_cache_built", False))
 
     st.subheader(":material/nights_stay: After Dark")
     _render_after_dark(data["late_night"])

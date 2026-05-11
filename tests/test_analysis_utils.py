@@ -275,5 +275,145 @@ class TestSwarmAnalysisCaches(unittest.TestCase):
         self.assertIsNone(loaded["Cafes"]["peak_hour"])
 
 
+class TestGetTransitDays(unittest.TestCase):
+    """Tests for get_transit_days."""
+
+    def test_returns_dates_with_airport_checkin(self) -> None:
+        from analysis_utils import get_transit_days
+
+        swarm = pd.DataFrame(
+            {"venue_category": ["Airport", "Coffee Shop"], "timestamp": [1700000000, 1700003600]}
+        )
+        days = get_transit_days(swarm)
+        self.assertEqual(len(days), 1)
+
+    def test_empty_swarm_returns_empty_set(self) -> None:
+        from analysis_utils import get_transit_days
+
+        self.assertEqual(get_transit_days(pd.DataFrame()), set())
+
+    def test_no_transit_category_returns_empty(self) -> None:
+        from analysis_utils import get_transit_days
+
+        swarm = pd.DataFrame({"venue_category": ["Museum", "Park"], "timestamp": [1, 2]})
+        self.assertEqual(get_transit_days(swarm), set())
+
+    def test_case_insensitive_matching(self) -> None:
+        from analysis_utils import get_transit_days
+
+        swarm = pd.DataFrame({"venue_category": ["airport"], "timestamp": [1700000000]})
+        self.assertEqual(len(get_transit_days(swarm)), 1)
+
+
+class TestSplitTransitListens(unittest.TestCase):
+    """Tests for split_transit_listens."""
+
+    def _make_df(self, days: list[str]) -> pd.DataFrame:
+        ts = [1700000000 + i * 86400 for i in range(len(days))]
+        return pd.DataFrame(
+            {
+                "date_text": pd.to_datetime(days),
+                "timestamp": ts,
+                "artist": ["A"] * len(days),
+            }
+        )
+
+    def test_partitions_into_two_sets(self) -> None:
+        from analysis_utils import split_transit_listens
+
+        df = self._make_df(["2024-01-01", "2024-01-02"])
+        transit, non = split_transit_listens(df, {"2024-01-01"})
+        self.assertEqual(len(transit), 1)
+        self.assertEqual(len(non), 1)
+
+    def test_empty_transit_days_yields_all_non_transit(self) -> None:
+        from analysis_utils import split_transit_listens
+
+        df = self._make_df(["2024-01-01", "2024-01-02"])
+        transit, non = split_transit_listens(df, set())
+        self.assertEqual(len(transit), 0)
+        self.assertEqual(len(non), 2)
+
+    def test_empty_df_returns_two_empty_dfs(self) -> None:
+        from analysis_utils import split_transit_listens
+
+        transit, non = split_transit_listens(pd.DataFrame(), {"2024-01-01"})
+        self.assertTrue(transit.empty)
+        self.assertTrue(non.empty)
+
+
+class TestClassifyVenueCategory(unittest.TestCase):
+    """Tests for _classify_venue_category."""
+
+    def test_restaurant_maps_correctly(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertEqual(_classify_venue_category("Italian Restaurant"), "Restaurants")
+
+    def test_bar_maps_correctly(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertEqual(_classify_venue_category("Dive Bar"), "Bars & Nightlife")
+
+    def test_cafe_maps_correctly(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertEqual(_classify_venue_category("Coffee Shop"), "Cafes")
+
+    def test_fast_food_maps_correctly(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertEqual(_classify_venue_category("Burger Joint"), "Fast Food")
+
+    def test_unknown_category_returns_none(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertIsNone(_classify_venue_category("Museum"))
+
+    def test_empty_string_returns_none(self) -> None:
+        from analysis_utils import _classify_venue_category
+
+        self.assertIsNone(_classify_venue_category(""))
+
+
+class TestGetDiningSoundtrackData(unittest.TestCase):
+    """Tests for get_dining_soundtrack_data."""
+
+    def test_returns_dict_with_bucket_keys(self) -> None:
+        from analysis_utils import get_dining_soundtrack_data
+
+        base_ts = 1700000000
+        swarm = pd.DataFrame({"venue_category": ["Italian Restaurant"], "timestamp": [base_ts]})
+        listens = pd.DataFrame(
+            {
+                "timestamp": [base_ts - 1800, base_ts, base_ts + 1800],
+                "artist": ["Artist A", "Artist A", "Artist B"],
+                "date_text": pd.to_datetime(
+                    ["2023-11-14 10:00", "2023-11-14 11:00", "2023-11-14 12:00"]
+                ),
+            }
+        )
+        result = get_dining_soundtrack_data(swarm, listens)
+        self.assertIn("Restaurants", result)
+
+    def test_empty_inputs_return_empty_dict(self) -> None:
+        from analysis_utils import get_dining_soundtrack_data
+
+        self.assertEqual(get_dining_soundtrack_data(pd.DataFrame(), pd.DataFrame()), {})
+
+    def test_missing_required_columns_returns_empty(self) -> None:
+        from analysis_utils import get_dining_soundtrack_data
+
+        bad_swarm = pd.DataFrame({"venue": ["Italian Restaurant"]})
+        listens = pd.DataFrame(
+            {
+                "timestamp": [1700000000],
+                "artist": ["A"],
+                "date_text": pd.to_datetime(["2023-01-01"]),
+            }
+        )
+        self.assertEqual(get_dining_soundtrack_data(bad_swarm, listens), {})
+
+
 if __name__ == "__main__":
     unittest.main()
