@@ -326,14 +326,8 @@ class TestRenderLifeInChapters(unittest.TestCase):
         with (
             patch("streamlit.session_state", {"df": df, "_loaded_config": None}),
             patch("pages.life_in_chapters.load_assumptions", return_value=assumptions_no_periods),
-            patch("pages.life_in_chapters._render_trip_detector"),
-            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
-            patch("streamlit.expander") as mock_expander,
+            patch("pages.life_in_chapters.load_detected_trips_cache", return_value=[]),
         ):
-            exp_cm = MagicMock()
-            exp_cm.__enter__ = MagicMock(return_value=exp_cm)
-            exp_cm.__exit__ = MagicMock(return_value=False)
-            mock_expander.return_value = exp_cm
             render_life_in_chapters()
         mock_warning.assert_called_once()
 
@@ -392,9 +386,8 @@ class TestRenderLifeInChapters(unittest.TestCase):
             patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
             patch("pages.life_in_chapters.load_assumptions", return_value=assumptions),
             patch("pages.life_in_chapters._render_home_vs_trip_summary"),
-            patch("pages.life_in_chapters._render_trip_detector"),
             patch("pages.life_in_chapters._render_chapter_map"),
-            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
+            patch("pages.life_in_chapters.load_detected_trips_cache", return_value=[]),
         ):
             render_life_in_chapters()
 
@@ -460,9 +453,8 @@ class TestRenderLifeInChapters(unittest.TestCase):
             patch("streamlit.session_state", {"df": df, "_loaded_config": (None, None, None)}),
             patch("pages.life_in_chapters.load_assumptions", return_value=assumptions),
             patch("pages.life_in_chapters._render_home_vs_trip_summary"),
-            patch("pages.life_in_chapters._render_trip_detector"),
             patch("pages.life_in_chapters._render_chapter_map"),
-            patch("pages.life_in_chapters._load_detected_trips_cache", return_value=[]),
+            patch("pages.life_in_chapters.load_detected_trips_cache", return_value=[]),
         ):
             render_life_in_chapters()
 
@@ -662,32 +654,32 @@ class TestDetectedTripsCache(unittest.TestCase):
     """Tests for _load_detected_trips_cache and _save_detected_trips_cache."""
 
     def test_load_returns_empty_for_missing_file(self) -> None:
-        from pages.life_in_chapters import _load_detected_trips_cache
+        from analysis_utils import load_detected_trips_cache
 
-        result = _load_detected_trips_cache("/nonexistent/path/trips.json")
+        result = load_detected_trips_cache("/nonexistent/path/trips.json")
         self.assertEqual(result, [])
 
     def test_save_and_load_roundtrip(self) -> None:
         import tempfile
 
-        from pages.life_in_chapters import _load_detected_trips_cache, _save_detected_trips_cache
+        from analysis_utils import load_detected_trips_cache, save_detected_trips_cache
 
         trips = [{"start": "2021-01-01", "end": "2021-01-07", "city": "Paris"}]
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "trips.json")
-            _save_detected_trips_cache(trips, path)
-            loaded = _load_detected_trips_cache(path)
+            save_detected_trips_cache(trips, path)
+            loaded = load_detected_trips_cache(path)
         self.assertEqual(loaded, trips)
 
     def test_load_returns_empty_for_invalid_json(self) -> None:
         import tempfile
 
-        from pages.life_in_chapters import _load_detected_trips_cache
+        from analysis_utils import load_detected_trips_cache
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
             fh.write("not valid json{")
             path = fh.name
-        result = _load_detected_trips_cache(path)
+        result = load_detected_trips_cache(path)
         os.unlink(path)
         self.assertEqual(result, [])
 
